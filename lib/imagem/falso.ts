@@ -3,7 +3,7 @@ import path from "path";
 import sharp, { type OverlayOptions } from "sharp";
 import {
   getRedeSocialConfig,
-  getZonaSeguraComum,
+  resolverHierarquiaInformacaoConfig,
   type RedeSocialConfig,
   type RedeSocialId,
 } from "../config/redes-sociais";
@@ -305,8 +305,7 @@ async function cleanLowerRightSliver(
  */
 async function generateLogoFromApprovedRefs(
   formato: "logotipo-classico" | "logotipo-moderno" | "logotipo-editorial",
-  ronda: number,
-  contexto?: ImagemContexto
+  ronda: number
 ): Promise<{ buffer: Buffer; fixtureNome: string; width: number; height: number }> {
   const size = 1024;
   const r = Math.max(1, Math.min(3, ronda || 1));
@@ -580,9 +579,498 @@ async function generateAvatarFromEmblemRef(
 }
 
 /**
- * Gera qualquer peça visual de capa, publicação (1:1 / 4:5) ou Story (9:16)
- * a partir exclusivamente de `docs/referencias/ia-aprovada/` e da referência de logótipo,
- * mantendo as zonas seguras (computador, telemóvel, sobreposição de avatar, 250 px no Story e 1546×423 no YouTube).
+ * Versão estendida de featherEdges que aplica também um fator global de opacidade
+ * e uma máscara limpa para fundir fotografia/padrões de fundo sobre qualquer paleta.
+ */
+async function featherAndTintLayer(
+  inputPng: Buffer,
+  opts: {
+    topPx?: number;
+    bottomPx?: number;
+    leftPx?: number;
+    rightPx?: number;
+    opacity?: number;
+  }
+): Promise<Buffer> {
+  const { data, info } = await sharp(inputPng)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const w = info.width;
+  const h = info.height;
+  const rgba = new Uint8Array(data);
+  const topPx = Math.max(0, Math.min(Math.floor(h * 0.48), opts.topPx || 0));
+  const bottomPx = Math.max(0, Math.min(Math.floor(h * 0.48), opts.bottomPx || 0));
+  const leftPx = Math.max(0, Math.min(Math.floor(w * 0.48), opts.leftPx || 0));
+  const rightPx = Math.max(0, Math.min(Math.floor(w * 0.48), opts.rightPx || 0));
+  const globalOp = Math.max(0, Math.min(1, opts.opacity ?? 1));
+
+  const smooth = (t: number) => {
+    const c = Math.max(0, Math.min(1, t));
+    return c * c * (3 - 2 * c);
+  };
+
+  for (let y = 0; y < h; y++) {
+    let ay = globalOp;
+    if (topPx > 0 && y < topPx) ay = Math.min(ay, globalOp * smooth((y + 0.5) / topPx));
+    if (bottomPx > 0 && y >= h - bottomPx) {
+      ay = Math.min(ay, globalOp * smooth((h - y - 0.5) / bottomPx));
+    }
+
+    for (let x = 0; x < w; x++) {
+      let ax = ay;
+      if (leftPx > 0 && x < leftPx) ax = Math.min(ax, globalOp * smooth((x + 0.5) / leftPx));
+      if (rightPx > 0 && x >= w - rightPx) {
+        ax = Math.min(ax, globalOp * smooth((w - x - 0.5) / rightPx));
+      }
+      if (ax < 1) {
+        const idx = (y * w + x) * 4 + 3;
+        rgba[idx] = Math.round(rgba[idx] * ax);
+      }
+    }
+  }
+
+  return sharp(Buffer.from(rgba.buffer), {
+    raw: { width: w, height: h, channels: 4 },
+  })
+    .png()
+    .toBuffer();
+}
+
+/**
+ * Gera filetes duplos finos em `sharp` puro (sem SVG) para o estilo Clássico editorial,
+ * mantendo luminosidade moderada (`alpha ~ 0.50`) para moldura periférica elegante.
+ */
+async function makeClassicDoubleBorderOverlays(
+  W: number,
+  H: number,
+  inset: number,
+  colorRgb: { r: number; g: number; b: number },
+  alpha = 0.5
+): Promise<OverlayOptions[]> {
+  const lumCol = 0.299 * colorRgb.r + 0.587 * colorRgb.g + 0.114 * colorRgb.b;
+  const safeAlpha = Math.max(
+    0.16,
+    Math.min(alpha, 52 / Math.max(1, Math.abs(244 - lumCol)))
+  );
+  const gap = Math.max(5, Math.round(inset * 0.35));
+  const out: OverlayOptions[] = [];
+
+  const addRectOutline = async (x: number, y: number, w: number, h: number, t: number, a: number) => {
+    if (w < 24 || h < 24 || t < 1) return;
+    const hStrip = await sharp({
+      create: { width: w, height: t, channels: 4, background: { ...colorRgb, alpha: a } },
+    })
+      .png()
+      .toBuffer();
+    const vStrip = await sharp({
+      create: { width: t, height: Math.max(2, h - t * 2), channels: 4, background: { ...colorRgb, alpha: a } },
+    })
+      .png()
+      .toBuffer();
+    out.push(
+      { input: hStrip, left: x, top: y },
+      { input: hStrip, left: x, top: y + h - t },
+      { input: vStrip, left: x, top: y + t },
+      { input: vStrip, left: x + w - t, top: y + t }
+    );
+  };
+
+  await addRectOutline(inset, inset, W - inset * 2, H - inset * 2, 2, safeAlpha);
+  await addRectOutline(
+    inset + gap,
+    inset + gap,
+    W - (inset + gap) * 2,
+    H - (inset + gap) * 2,
+    1,
+    safeAlpha * 0.78
+  );
+  return out;
+}
+
+/**
+ * Compõe `[Emblema]` + `[Wordmark]` lado a lado **em linha horizontal**,
+ * maximizando a área útil de leitura em faixas ultra-largas (LinkedIn 4:1 / 5,9:1 e YouTube 1546×423).
+ */
+async function composeInlineHorizontalPair(opts: {
+  emblemBuf: Buffer;
+  wordmarkBuf: Buffer;
+  targetW: number;
+  targetH: number;
+  gapRatio?: number;
+  emblemWeight?: number;
+  wordmarkWeight?: number;
+}): Promise<{ buffer: Buffer; width: number; height: number }> {
+  const { targetW, targetH } = opts;
+  const gapRatio = opts.gapRatio ?? 0.045;
+  const emblemWeight = opts.emblemWeight ?? 0.96;
+  const wordmarkWeight = opts.wordmarkWeight ?? 0.82;
+
+  const [eMeta, wMeta] = await Promise.all([
+    sharp(opts.emblemBuf).metadata(),
+    sharp(opts.wordmarkBuf).metadata(),
+  ]);
+  const eRatio = (eMeta.width || 1) / Math.max(1, eMeta.height || 1);
+  const wRatio = (wMeta.width || 1) / Math.max(1, wMeta.height || 1);
+
+  const hRef = Math.round(targetH * 0.88);
+  const eh0 = hRef * emblemWeight;
+  const ew0 = eh0 * eRatio;
+  const wh0 = hRef * wordmarkWeight;
+  const ww0 = wh0 * wRatio;
+  const gap0 = Math.max(12, Math.round(targetW * gapRatio));
+
+  const scale = Math.min(1, (targetW * 0.94) / Math.max(1, ew0 + gap0 + ww0));
+  const eh = Math.max(24, Math.round(eh0 * scale));
+  const ew = Math.max(24, Math.round(ew0 * scale));
+  const wh = Math.max(20, Math.round(wh0 * scale));
+  const ww = Math.max(24, Math.round(ww0 * scale));
+  const gap = Math.max(10, Math.round(gap0 * scale));
+
+  const [eScaledRaw, wScaledRaw] = await Promise.all([
+    sharp(opts.emblemBuf)
+      .resize(ew, eh, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png()
+      .toBuffer(),
+    sharp(opts.wordmarkBuf)
+      .resize(ww, wh, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png()
+      .toBuffer(),
+  ]);
+
+  const [eScaled, wScaled] = await Promise.all([
+    featherEdges(eScaledRaw, { topPx: 8, bottomPx: 8, leftPx: 10, rightPx: 10 }),
+    featherEdges(wScaledRaw, { topPx: 8, bottomPx: 8, leftPx: 10, rightPx: 10 }),
+  ]);
+
+  const totalW = ew + gap + ww;
+  const startX = Math.max(0, Math.round((targetW - totalW) / 2));
+  const eTop = Math.max(0, Math.round((targetH - eh) / 2));
+  const wTop = Math.max(0, Math.round((targetH - wh) / 2));
+
+  const canvas = await sharp({
+    create: {
+      width: targetW,
+      height: targetH,
+      channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    },
+  })
+    .composite([
+      { input: eScaled, left: startX, top: eTop },
+      { input: wScaled, left: startX + ew + gap, top: wTop },
+    ])
+    .png()
+    .toBuffer();
+
+  return { buffer: canvas, width: targetW, height: targetH };
+}
+
+/**
+ * Compõe `[Emblema destacado]` + `[Wordmark]` (+ opcional `[Slogan]`) em empilhamento vertical
+ * para formatos verticais (Instagram 4:5, 1:1 e Story 9:16), dando protagonismo ao emblema.
+ */
+async function composeVerticalHighlightedStack(opts: {
+  emblemBuf: Buffer;
+  wordmarkBuf: Buffer;
+  sloganBuf?: Buffer;
+  targetW: number;
+  targetH: number;
+}): Promise<Buffer> {
+  const { targetW, targetH, sloganBuf } = opts;
+  const hasSlogan = Boolean(sloganBuf);
+
+  const emblemSlotH = Math.round(targetH * (hasSlogan ? 0.49 : 0.56));
+  const wordmarkSlotH = Math.round(targetH * (hasSlogan ? 0.34 : 0.38));
+  const sloganSlotH = hasSlogan ? Math.round(targetH * 0.1) : 0;
+
+  const emblemScaled = await featherEdges(
+    await sharp(opts.emblemBuf)
+      .resize(Math.round(targetW * 0.92), emblemSlotH, {
+        fit: "contain",
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+      })
+      .png()
+      .toBuffer(),
+    { topPx: 10, bottomPx: 10, leftPx: 12, rightPx: 12 }
+  );
+
+  const wordmarkScaled = await featherEdges(
+    await sharp(opts.wordmarkBuf)
+      .resize(Math.round(targetW * 0.88), wordmarkSlotH, {
+        fit: "contain",
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+      })
+      .png()
+      .toBuffer(),
+    { topPx: 8, bottomPx: 8, leftPx: 12, rightPx: 12 }
+  );
+
+  const eMeta = await sharp(emblemScaled).metadata();
+  const wMeta = await sharp(wordmarkScaled).metadata();
+  const ew = eMeta.width || targetW;
+  const eh = eMeta.height || emblemSlotH;
+  const ww = wMeta.width || targetW;
+  const wh = wMeta.height || wordmarkSlotH;
+
+  const overlays: OverlayOptions[] = [];
+  let cursorY = 0;
+
+  let sScaled: Buffer | null = null;
+  let sw = 0;
+  let sh = 0;
+  if (sloganBuf && sloganSlotH > 18) {
+    sScaled = await featherEdges(
+      await sharp(sloganBuf)
+        .resize(Math.round(targetW * 0.82), sloganSlotH, {
+          fit: "contain",
+          background: { r: 0, g: 0, b: 0, alpha: 0 },
+        })
+        .png()
+        .toBuffer(),
+      { topPx: 6, bottomPx: 6, leftPx: 8, rightPx: 8 }
+    );
+    const sMeta = await sharp(sScaled).metadata();
+    sw = sMeta.width || targetW;
+    sh = sMeta.height || sloganSlotH;
+  }
+
+  const gap1 = Math.max(8, Math.round(targetH * 0.025));
+  const gap2 = sScaled ? Math.max(8, Math.round(targetH * 0.025)) : 0;
+  const usedH = eh + gap1 + wh + gap2 + sh;
+  cursorY = Math.max(0, Math.round((targetH - usedH) / 2));
+
+  overlays.push({
+    input: emblemScaled,
+    left: Math.max(0, Math.round((targetW - ew) / 2)),
+    top: cursorY,
+  });
+  cursorY += eh + gap1;
+  overlays.push({
+    input: wordmarkScaled,
+    left: Math.max(0, Math.round((targetW - ww) / 2)),
+    top: cursorY,
+  });
+  if (sScaled) {
+    cursorY += wh + gap2;
+    overlays.push({
+      input: sScaled,
+      left: Math.max(0, Math.round((targetW - sw) / 2)),
+      top: cursorY,
+    });
+  }
+
+  return sharp({
+    create: {
+      width: targetW,
+      height: targetH,
+      channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    },
+  })
+    .composite(overlays)
+    .png()
+    .toBuffer();
+}
+
+interface ExtractedBrandParts {
+  baseRgb: { r: number; g: number; b: number };
+  emblem: Buffer;
+  wordmark: Buffer;
+  sloganCrop?: Buffer;
+  wheatLeft?: Buffer;
+  wheatRight?: Buffer;
+  breadArchScene: Buffer;
+  breadSoftScene: Buffer;
+  isCustomClientLogo: boolean;
+}
+
+const partsCache = new Map<string, Promise<ExtractedBrandParts>>();
+
+function getFornoExtractedParts(estiloVisual: "moderno" | "classico"): Promise<ExtractedBrandParts> {
+  const key = `forno-${estiloVisual}`;
+  const cached = partsCache.get(key);
+  if (cached) return cached;
+
+  const promise = (async (): Promise<ExtractedBrandParts> => {
+    const capMod = loadApprovedRef("capa-moderna.jpg");
+    const breadArchScene = await sharp(capMod)
+      .extract({ left: 602, top: 0, width: 678, height: 720 })
+      .png()
+      .toBuffer();
+    const breadSoftScene = await sharp(capMod)
+      .extract({ left: 660, top: 170, width: 620, height: 550 })
+      .png()
+      .toBuffer();
+
+    if (estiloVisual === "moderno") {
+      const baseRgb = await sampleEdgeRgb(capMod, 14, 14);
+      const emblem = await sharp(capMod)
+        .extract({ left: 72, top: 44, width: 526, height: 268 })
+        .png()
+        .toBuffer();
+      const wordmarkRaw = await sharp(capMod)
+        .extract({ left: 72, top: 316, width: 526, height: 234 })
+        .png()
+        .toBuffer();
+      const wordmark = await cleanLowerRightSliver(wordmarkRaw, 492, 126);
+      const sloganCrop = await sharp(capMod)
+        .extract({ left: 118, top: 604, width: 440, height: 48 })
+        .png()
+        .toBuffer();
+
+      return {
+        baseRgb,
+        emblem,
+        wordmark,
+        sloganCrop,
+        breadArchScene,
+        breadSoftScene,
+        isCustomClientLogo: false,
+      };
+    }
+
+    const capCls = loadApprovedRef("capa-classica.jpg");
+    const baseRgb = await sampleEdgeRgb(capCls, 40, 40);
+    const emblem = await sharp(capCls)
+      .extract({ left: 368, top: 42, width: 544, height: 264 })
+      .png()
+      .toBuffer();
+    const wordmark = await sharp(capCls)
+      .extract({ left: 368, top: 312, width: 550, height: 240 })
+      .png()
+      .toBuffer();
+    const sloganCrop = await sharp(capCls)
+      .extract({ left: 375, top: 610, width: 540, height: 52 })
+      .png()
+      .toBuffer();
+    const wheatLeft = await sharp(capCls)
+      .extract({ left: 44, top: 120, width: 208, height: 490 })
+      .png()
+      .toBuffer();
+    const wheatRight = await sharp(capCls)
+      .extract({ left: 996, top: 120, width: 235, height: 490 })
+      .png()
+      .toBuffer();
+
+    return {
+      baseRgb,
+      emblem,
+      wordmark,
+      sloganCrop,
+      wheatLeft,
+      wheatRight,
+      breadArchScene,
+      breadSoftScene,
+      isCustomClientLogo: false,
+    };
+  })();
+
+  partsCache.set(key, promise);
+  return promise;
+}
+
+/**
+ * Prepara partes limpas para uma marca personalizada (Entrada B ou outro nome),
+ * separando emblema + palavra se o logótipo for empilhado, sem nunca desenhar
+ * texto da marca-exemplo Forno da Vilariça por trás.
+ */
+async function extractCustomClientParts(
+  refBuf: Buffer
+): Promise<{
+  fullClean: Buffer;
+  emblem: Buffer;
+  wordmark: Buffer;
+  canSplitInline: boolean;
+}> {
+  const clean = await removeUniformMarginFloodFill(refBuf);
+  const { data, info } = await sharp(clean)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const w = info.width;
+  const h = info.height;
+  let minX = w;
+  let maxX = 0;
+  let minY = h;
+  let maxY = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (data[(y * w + x) * 4 + 3] > 28) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  const pad = 10;
+  const left = Math.max(0, minX - pad);
+  const top = Math.max(0, minY - pad);
+  const cropW = Math.max(24, Math.min(w - left, maxX - minX + 1 + pad * 2));
+  const cropH = Math.max(24, Math.min(h - top, maxY - minY + 1 + pad * 2));
+
+  const trimmed =
+    cropW < w || cropH < h
+      ? await sharp(clean).extract({ left, top, width: cropW, height: cropH }).png().toBuffer()
+      : clean;
+
+  // Tenta localizar uma banda horizontal limpa entre 35% e 68% para compor em linha nas faixas
+  let splitRow = -1;
+  if (cropH >= cropW * 0.72 && cropH > 120) {
+    const tInfo = await sharp(trimmed).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const yStart = Math.round(cropH * 0.35);
+    const yEnd = Math.round(cropH * 0.68);
+    let bestRunLen = 0;
+    let runStart = -1;
+    for (let y = yStart; y <= yEnd; y++) {
+      let count = 0;
+      for (let x = 0; x < tInfo.info.width; x++) {
+        if (tInfo.data[(y * tInfo.info.width + x) * 4 + 3] > 32) count++;
+      }
+      if (count <= 2) {
+        if (runStart < 0) runStart = y;
+      } else if (runStart >= 0) {
+        const len = y - runStart;
+        if (len > bestRunLen) {
+          bestRunLen = len;
+          splitRow = Math.round((runStart + y) / 2);
+        }
+        runStart = -1;
+      }
+    }
+    if (runStart >= 0 && yEnd - runStart > bestRunLen) {
+      splitRow = Math.round((runStart + yEnd) / 2);
+    }
+  }
+
+  if (splitRow > 24 && splitRow < cropH - 24) {
+    const [emb, word] = await Promise.all([
+      sharp(trimmed).extract({ left: 0, top: 0, width: cropW, height: splitRow }).png().toBuffer(),
+      sharp(trimmed)
+        .extract({ left: 0, top: splitRow, width: cropW, height: cropH - splitRow })
+        .png()
+        .toBuffer(),
+    ]);
+    return { fullClean: trimmed, emblem: emb, wordmark: word, canSplitInline: true };
+  }
+
+  return {
+    fullClean: trimmed,
+    emblem: trimmed,
+    wordmark: trimmed,
+    canSplitInline: false,
+  };
+}
+
+/**
+ * Constrói uma peça visual com composição própria adaptada à proporção de destino,
+ * separando em 3 camadas:
+ * (a) fundo/textura/ambiente fotográfico (que pode sangrar além da zona segura móvel),
+ * (b) informação da marca (logótipo, nome, slogan se couber — estritamente na zona móvel),
+ * (c) áreas reservadas a foto de perfil e UI da rede social.
  */
 async function generateSocialArtworkFromApprovedRefs(
   rede: RedeSocialConfig,
@@ -591,253 +1079,578 @@ async function generateSocialArtworkFromApprovedRefs(
 ): Promise<{ buffer: Buffer; fixtureNome: string; adapted: boolean }> {
   const W = rede.widthPx;
   const H = rede.heightPx;
+  const disposicao = rede.composicao.disposicao;
   const masterName = estiloVisual === "moderno" ? "capa-moderna.jpg" : "capa-classica.jpg";
-  const masterBuf = loadApprovedRef(masterName);
 
-  const overlays: OverlayOptions[] = [];
+  const fornoParts = await getFornoExtractedParts(estiloVisual);
+  const baseRgb = fornoParts.baseRgb;
 
-  // Amostra exata da superfície base da referência aprovada para fusão sem costuras
-  const baseRgb = await sampleEdgeRgb(masterBuf, 14, 14);
-
-  // Caso especial 1: Instagram Story (1080×1920) -> 250 px topo e 250 px base rigorosamente livres
-  if (rede.id === "ig-story") {
-    const safeTop = (rede.margemTopoPx || 250) + 28;
-    const safeBottom = H - (rede.margemBasePx || 250) - 28;
-    const safeH = safeBottom - safeTop;
-    const safeW = W - 144;
-
-    if (estiloVisual === "moderno") {
-      // Topo dentro da zona segura: foto editorial em arco com transição suave para o fundo espresso
-      const archRaw = await sharp(masterBuf)
-        .extract({ left: 604, top: 0, width: 676, height: 720 })
-        .resize(safeW, Math.round(safeH * 0.5), { fit: "cover", position: "centre" })
-        .png()
-        .toBuffer();
-      const archPhoto = await featherEdges(archRaw, {
-        topPx: 28,
-        bottomPx: 110,
-        leftPx: 28,
-        rightPx: 28,
-      });
-
-      const brandRaw = await sharp(masterBuf)
-        .extract({ left: 68, top: 20, width: 530, height: 670 })
-        .resize(safeW, Math.round(safeH * 0.46), {
-          fit: "contain",
-          background: { r: baseRgb.r, g: baseRgb.g, b: baseRgb.b, alpha: 0 },
-        })
-        .png()
-        .toBuffer();
-      const brandCard = await featherEdges(brandRaw, {
-        topPx: 32,
-        bottomPx: 24,
-        leftPx: 28,
-        rightPx: 28,
-      });
-
-      overlays.push(
-        { input: archPhoto, left: 72, top: safeTop },
-        { input: brandCard, left: 72, top: safeTop + Math.round(safeH * 0.51) }
-      );
-    } else {
-      const innerRaw = await sharp(masterBuf)
-        .extract({ left: 90, top: 48, width: 1100, height: 624 })
-        .resize(safeW, Math.round(safeH * 0.72), {
-          fit: "contain",
-          background: { r: baseRgb.r, g: baseRgb.g, b: baseRgb.b, alpha: 0 },
-        })
-        .png()
-        .toBuffer();
-      const innerClassic = await featherEdges(innerRaw, {
-        topPx: 20,
-        bottomPx: 20,
-        leftPx: 20,
-        rightPx: 20,
-      });
-      const verticalShift = safeTop + Math.round((safeH - Math.round(safeH * 0.72)) / 2);
-      overlays.push({ input: innerClassic, left: 72, top: verticalShift });
-    }
-  } else if (rede.id === "ig-publicacao" || rede.id === "ig-publicacao-1080x1350") {
-    // Publicação 1:1 (1080×1080) e 4:5 (1080×1350) com transição gradual entre foto e marca
-    const comum = getZonaSeguraComum(rede);
-    if (estiloVisual === "moderno") {
-      const archRaw = await sharp(masterBuf)
-        .extract({ left: 604, top: 0, width: 676, height: 720 })
-        .resize(comum.width, Math.round(comum.height * 0.49), {
-          fit: "cover",
-          position: "centre",
-        })
-        .png()
-        .toBuffer();
-      const archPhoto = await featherEdges(archRaw, {
-        topPx: 24,
-        bottomPx: 92,
-        leftPx: 24,
-        rightPx: 24,
-      });
-
-      const brandRaw = await sharp(masterBuf)
-        .extract({ left: 68, top: 20, width: 530, height: 670 })
-        .resize(comum.width, Math.round(comum.height * 0.47), {
-          fit: "contain",
-          background: { r: baseRgb.r, g: baseRgb.g, b: baseRgb.b, alpha: 0 },
-        })
-        .png()
-        .toBuffer();
-      const brandCard = await featherEdges(brandRaw, {
-        topPx: 28,
-        bottomPx: 20,
-        leftPx: 24,
-        rightPx: 24,
-      });
-
-      overlays.push(
-        { input: archPhoto, left: comum.x, top: comum.y },
-        { input: brandCard, left: comum.x, top: comum.y + Math.round(comum.height * 0.5) }
-      );
-    } else {
-      const innerRaw = await sharp(masterBuf)
-        .extract({ left: 90, top: 48, width: 1100, height: 624 })
-        .resize(comum.width, comum.height, {
-          fit: "contain",
-          background: { r: baseRgb.r, g: baseRgb.g, b: baseRgb.b, alpha: 0 },
-        })
-        .png()
-        .toBuffer();
-      const innerClassic = await featherEdges(innerRaw, {
-        topPx: 20,
-        bottomPx: 20,
-        leftPx: 20,
-        rightPx: 20,
-      });
-      overlays.push({ input: innerClassic, left: comum.x, top: comum.y });
-    }
-  } else {
-    // Capas panorâmicas / YouTube Banner: respeita zona comum + evita sobreposição de avatar inferior esquerda
-    const comum = getZonaSeguraComum(rede);
-    const minLeft = rede.avatarOverlapDesktop
-      ? Math.max(comum.x, rede.avatarOverlapDesktop.x + rede.avatarOverlapDesktop.width + 24)
-      : comum.x;
-    const safeWidth = Math.max(120, comum.x + comum.width - minLeft);
-    const safeHeight = comum.height;
-
-    const srcExtract =
-      estiloVisual === "classico"
-        ? { left: 140, top: 44, width: 1000, height: 632 }
-        : { left: 24, top: 18, width: 1236, height: 684 };
-
-    const fitHeroRaw = await sharp(masterBuf)
-      .extract(srcExtract)
-      .resize(safeWidth, safeHeight, {
-        fit: "contain",
-        background: { r: baseRgb.r, g: baseRgb.g, b: baseRgb.b, alpha: 0 },
-      })
-      .png()
-      .toBuffer();
-
-    const fitHero = await featherEdges(fitHeroRaw, {
-      topPx: 18,
-      bottomPx: 18,
-      leftPx: 28,
-      rightPx: 20,
-    });
-
-    overlays.push({ input: fitHero, left: minLeft, top: comum.y });
-  }
-
-  let adapted = false;
-
-  // Para outras marcas (ou logótipo carregado na Entrada B diferente de Forno da Vilariça):
-  // integra visualmente o logótipo real na área segura para coerência imediata em modo falso
   const refBuf = contexto?.logotipoReferencia;
   const isCustomBrand =
     !isDefaultFornoBrand(contexto?.nome) &&
     Boolean(refBuf && refBuf.length > 0) &&
     !(await isImageMostlySameAsRef(refBuf!, "logo.jpg"));
 
-  if (isCustomBrand && refBuf) {
-    adapted = true;
-    const comum = getZonaSeguraComum(rede);
-    const minLeft = rede.avatarOverlapDesktop
-      ? Math.max(comum.x, rede.avatarOverlapDesktop.x + rede.avatarOverlapDesktop.width + 28)
-      : comum.x;
-    const badgeW = Math.min(Math.round(comum.width * 0.36), 340);
-    const badgeH = Math.min(Math.round(comum.height * 0.42), 180);
+  const hierarquia = resolverHierarquiaInformacaoConfig(
+    {
+      nome: contexto?.nome || "Forno da Vilariça",
+      slogan: contexto?.slogan,
+      sector: contexto?.sector,
+      website: undefined,
+    } as { nome?: string; slogan?: string; website?: string },
+    rede
+  );
 
-    try {
-      const cleanRef = await removeUniformMarginFloodFill(refBuf);
-      const clientLogoScaled = await sharp(cleanRef)
-        .resize(Math.max(48, badgeW - 24), Math.max(48, badgeH - 24), {
-          fit: "contain",
-          background: { r: 255, g: 255, b: 255, alpha: 0 },
-        })
-        .png()
-        .toBuffer();
+  // Paleta cromática ligeiramente ajustada se marca personalizada tiver cor distinta
+  let canvasBgRgb = { ...baseRgb };
+  const overlays: OverlayOptions[] = [];
+  let adapted = isCustomBrand;
 
+  const borderColorRgb =
+    estiloVisual === "moderno"
+      ? { r: 217, g: 130, b: 43 }
+      : contexto?.paleta?.primaria
+      ? hexToRgb(contexto.paleta.primaria.hex)
+      : { r: 184, g: 74, b: 36 };
+
+  if (isCustomBrand && contexto?.paleta) {
+    canvasBgRgb =
+      estiloVisual === "moderno"
+        ? hexToRgb(mixHex(contexto.paleta.tinta.hex, "#1D130E", 0.55))
+        : hexToRgb(mixHex(contexto.paleta.papel.hex, "#FFF6E8", 0.72));
+  }
+
+  const mob = rede.safeZoneMobile;
+  const deskMobAvatarRight = Math.max(
+    rede.avatarOverlapDesktop ? rede.avatarOverlapDesktop.x + rede.avatarOverlapDesktop.width + 18 : 0,
+    rede.avatarOverlapMobile ? rede.avatarOverlapMobile.x + rede.avatarOverlapMobile.width + 18 : 0
+  );
+
+  // Prepara bloco informativo adaptado (Forno da Vilariça vs marca externa Entrada B)
+  const customParts =
+    isCustomBrand && refBuf ? await extractCustomClientParts(refBuf) : null;
+
+  const placeBrandInfoInBox = async (
+    box: { x: number; y: number; width: number; height: number },
+    mode: "inline" | "stack" | "stack-compact" | "vertical-highlighted"
+  ) => {
+    if (customParts) {
+      // Renderiza logótipo do cliente num cartão coerente de contraste dentro da área segura
       const pillBg =
         estiloVisual === "moderno"
-          ? { r: 250, g: 247, b: 242, alpha: 0.94 }
-          : { r: 254, g: 246, b: 227, alpha: 0.96 };
+          ? { r: 250, g: 247, b: 242, alpha: 0.95 }
+          : { r: 255, g: 249, b: 238, alpha: 0.96 };
 
-      const badgeCard = await sharp({
-        create: {
-          width: badgeW,
-          height: badgeH,
-          channels: 4,
-          background: pillBg,
-        },
+      let innerLogo: Buffer;
+      if (mode === "inline" && customParts.canSplitInline) {
+        const inline = await composeInlineHorizontalPair({
+          emblemBuf: customParts.emblem,
+          wordmarkBuf: customParts.wordmark,
+          targetW: Math.max(80, box.width - 28),
+          targetH: Math.max(48, box.height - 20),
+        });
+        innerLogo = inline.buffer;
+      } else {
+        innerLogo = await sharp(customParts.fullClean)
+          .resize(Math.max(48, box.width - 28), Math.max(48, box.height - 24), {
+            fit: "contain",
+            background: { r: 0, g: 0, b: 0, alpha: 0 },
+          })
+          .png()
+          .toBuffer();
+      }
+
+      const cardW = box.width;
+      const cardH = box.height;
+      const card = await sharp({
+        create: { width: cardW, height: cardH, channels: 4, background: pillBg },
       })
-        .composite([{ input: clientLogoScaled, gravity: "center" }])
+        .composite([{ input: innerLogo, gravity: "center" }])
         .png()
         .toBuffer();
-
-      overlays.push({
-        input: badgeCard,
-        left: minLeft + 16,
-        top: Math.max(comum.y + 8, Math.round(comum.y + (comum.height - badgeH) / 2)),
-      });
-    } catch {
-      // ignora caso a referência não seja rasterizável
+      overlays.push({ input: card, left: box.x, top: box.y });
+      return;
     }
+
+    if (mode === "inline") {
+      const inline = await composeInlineHorizontalPair({
+        emblemBuf: fornoParts.emblem,
+        wordmarkBuf: fornoParts.wordmark,
+        targetW: box.width,
+        targetH: box.height,
+        gapRatio: W / Math.max(1, H) >= 5 ? 0.04 : 0.05,
+      });
+      overlays.push({ input: inline.buffer, left: box.x, top: box.y });
+      return;
+    }
+
+    if (mode === "vertical-highlighted") {
+      const stack = await composeVerticalHighlightedStack({
+        emblemBuf: fornoParts.emblem,
+        wordmarkBuf: fornoParts.wordmark,
+        sloganBuf: hierarquia.incluirSlogan ? fornoParts.sloganCrop : undefined,
+        targetW: box.width,
+        targetH: box.height,
+      });
+      overlays.push({ input: stack, left: box.x, top: box.y });
+      return;
+    }
+
+    // `stack` ou `stack-compact`: emblema + wordmark (+ slogan só se mode === "stack" e incluirSlogan)
+    const stack = await composeVerticalHighlightedStack({
+      emblemBuf: fornoParts.emblem,
+      wordmarkBuf: fornoParts.wordmark,
+      sloganBuf:
+        mode === "stack" && hierarquia.incluirSlogan ? fornoParts.sloganCrop : undefined,
+      targetW: box.width,
+      targetH: box.height,
+    });
+    overlays.push({ input: stack, left: box.x, top: box.y });
+  };
+
+  // =========================================================================
+  // DISPOSIÇÃO 1: FAIXAS ULTRA-LARGAS (LinkedIn Pessoal 4:1, Empresa 5,9:1, YouTube 1546×423)
+  // Regra: logótipo + nome EM LINHA HORIZONTAL, sem slogan nem contactos; fundo sangra fora da zona móvel
+  // =========================================================================
+  if (disposicao === "faixa-ultra-larga") {
+    adapted = true;
+    const isYt = rede.id === "yt-banner";
+    const infoLeft = isYt ? mob.x + 48 : Math.max(mob.x + 20, deskMobAvatarRight + 10);
+    const infoRight = mob.x + mob.width - (estiloVisual === "classico" && !isYt ? 96 : 36);
+    const infoTop = mob.y + Math.max(10, Math.round(mob.height * 0.08));
+    const infoHeight = Math.max(80, mob.height - Math.max(20, Math.round(mob.height * 0.16)));
+    const infoWidth = Math.max(240, infoRight - infoLeft);
+
+    if (estiloVisual === "moderno") {
+      if (isYt) {
+        // TV & Desktop wings (2560×1440): fotografia atmosférica suave em volta da faixa central 1546×423
+        const tvBackdrop = await featherAndTintLayer(
+          await sharp(fornoParts.breadArchScene)
+            .resize(W, H, { fit: "cover", position: "centre" })
+            .blur(1.1)
+            .png()
+            .toBuffer(),
+          { topPx: 80, bottomPx: 80, leftPx: 140, rightPx: 140, opacity: 0.42 }
+        );
+        // Faixa central de monitor (2560×423) com arco/pão suave nas laterais de computador
+        const rightWingW = W - (mob.x + mob.width) + 220;
+        const rightWing = await featherAndTintLayer(
+          await sharp(fornoParts.breadArchScene)
+            .resize(rightWingW, mob.height, { fit: "cover", position: "centre" })
+            .blur(0.75)
+            .png()
+            .toBuffer(),
+          { leftPx: 160, topPx: 28, bottomPx: 28, opacity: 0.85 }
+        );
+        const leftWingW = mob.x + 120;
+        const leftWing = await featherAndTintLayer(
+          await sharp(fornoParts.breadSoftScene)
+            .resize(leftWingW, mob.height, { fit: "cover", position: "centre" })
+            .blur(1.15)
+            .png()
+            .toBuffer(),
+          { rightPx: 140, topPx: 28, bottomPx: 28, opacity: 0.46 }
+        );
+        // Faixa calma central atrás da informação dentro de 1546×423
+        const safePlate = await featherAndTintLayer(
+          await sharp({
+            create: {
+              width: mob.width - 36,
+              height: mob.height - 20,
+              channels: 4,
+              background: { ...canvasBgRgb, alpha: 1 },
+            },
+          })
+            .png()
+            .toBuffer(),
+          { leftPx: 90, rightPx: 90, topPx: 24, bottomPx: 24, opacity: 0.92 }
+        );
+
+        overlays.push(
+          { input: tvBackdrop, left: 0, top: 0 },
+          { input: leftWing, left: 0, top: mob.y },
+          { input: rightWing, left: W - rightWingW, top: mob.y },
+          { input: safePlate, left: mob.x + 18, top: mob.y + 10 }
+        );
+      } else {
+        // LinkedIn 4:1 / 5,9:1: lado direito com arco + pão a sangrar até W, lado esquerdo ambiente calmo
+        const rightEdgeW = Math.max(180, W - (mob.x + mob.width) + Math.round(W * 0.14));
+        const rightScene = await featherAndTintLayer(
+          await sharp(fornoParts.breadArchScene)
+            .resize(rightEdgeW, H, { fit: "cover", position: "centre" })
+            .blur(0.7)
+            .png()
+            .toBuffer(),
+          { leftPx: Math.min(180, Math.round(rightEdgeW * 0.65)), opacity: 0.9 }
+        );
+        const leftBleedW = Math.max(140, Math.round(mob.x * 0.92));
+        const leftBleed = await featherAndTintLayer(
+          await sharp(fornoParts.breadSoftScene)
+            .resize(leftBleedW, H, { fit: "cover", position: "centre" })
+            .blur(1.25)
+            .png()
+            .toBuffer(),
+          { rightPx: Math.round(leftBleedW * 0.45), bottomPx: Math.round(H * 0.35), opacity: 0.32 }
+        );
+        overlays.push(
+          { input: leftBleed, left: 0, top: 0 },
+          { input: rightScene, left: W - rightEdgeW, top: 0 }
+        );
+      }
+
+      await placeBrandInfoInBox(
+        { x: infoLeft, y: infoTop, width: infoWidth, height: infoHeight },
+        "inline"
+      );
+    } else {
+      // CLÁSSICO ultra-largo: pergaminho quente + luz dourada suave a sangrar fora da zona móvel + moldura dupla
+      if (isYt) {
+        const warmTvWash = await featherAndTintLayer(
+          await sharp(fornoParts.breadSoftScene)
+            .resize(W, H, { fit: "cover", position: "centre" })
+            .modulate({ brightness: 1.25, saturation: 0.72 })
+            .blur(1.5)
+            .png()
+            .toBuffer(),
+          { topPx: 80, bottomPx: 80, leftPx: 120, rightPx: 120, opacity: 0.18 }
+        );
+        const centerCream = await featherAndTintLayer(
+          await sharp({
+            create: {
+              width: mob.width + 80,
+              height: mob.height + 36,
+              channels: 4,
+              background: { ...canvasBgRgb, alpha: 1 },
+            },
+          })
+            .png()
+            .toBuffer(),
+          { leftPx: 90, rightPx: 90, topPx: 30, bottomPx: 30, opacity: 0.95 }
+        );
+        overlays.push(
+          { input: warmTvWash, left: 0, top: 0 },
+          { input: centerCream, left: Math.max(0, mob.x - 40), top: Math.max(0, mob.y - 18) }
+        );
+      } else {
+        const warmSide = await featherAndTintLayer(
+          await sharp(fornoParts.breadSoftScene)
+            .resize(Math.round(W * 0.28), H, { fit: "cover", position: "centre" })
+            .modulate({ brightness: 1.28, saturation: 0.75 })
+            .blur(1.4)
+            .png()
+            .toBuffer(),
+          { leftPx: Math.round(W * 0.14), opacity: 0.2 }
+        );
+        overlays.push({ input: warmSide, left: W - Math.round(W * 0.28), top: 0 });
+      }
+
+      const borderInset = isYt ? 44 : Math.max(12, Math.round(H * 0.06));
+      overlays.push(
+        ...(await makeClassicDoubleBorderOverlays(W, H, borderInset, borderColorRgb, 0.5))
+      );
+
+      // Ornamento de espiga clássica à direita estritamente dentro da zona móvel
+      if (fornoParts.wheatRight && !isCustomBrand && H >= 190) {
+        const sprigH = Math.max(80, Math.round(infoHeight * 0.92));
+        const sprigW = Math.max(36, Math.round(sprigH * 0.45));
+        const sprigScaled = await featherEdges(
+          await sharp(fornoParts.wheatRight)
+            .resize(sprigW, sprigH, {
+              fit: "contain",
+              background: { ...canvasBgRgb, alpha: 0 },
+            })
+            .png()
+            .toBuffer(),
+          { topPx: 6, bottomPx: 6, leftPx: 6, rightPx: 6 }
+        );
+        overlays.push({
+          input: sprigScaled,
+          left: Math.min(mob.x + mob.width - sprigW - 14, infoLeft + infoWidth + 10),
+          top: Math.round(infoTop + (infoHeight - sprigH) / 2),
+        });
+      }
+
+      await placeBrandInfoInBox(
+        { x: infoLeft, y: infoTop, width: infoWidth, height: infoHeight },
+        "inline"
+      );
+    }
+
+    const finalBuf = await sharp({
+      create: { width: W, height: H, channels: 4, background: { ...canvasBgRgb, alpha: 1 } },
+    })
+      .composite(overlays)
+      .flatten({ background: canvasBgRgb })
+      .png()
+      .toBuffer();
+
+    return { buffer: finalBuf, fixtureNome: `docs/referencias/ia-aprovada/${masterName}`, adapted };
   }
 
-  // Ajuste de paleta subtil caso o utilizador altere significativamente a cor primária (sem SVG)
-  const customPrimary = contexto?.paleta?.primaria?.hex;
-  const defaultPrimary = estiloVisual === "moderno" ? "#172E2C" : "#B84A24";
-  if (customPrimary && !isDefaultFornoBrand(contexto?.nome)) {
-    const a = hexToRgb(customPrimary);
-    const b = hexToRgb(defaultPrimary);
-    if (Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b) > 65) {
-      adapted = true;
-      const tintHex = mixHex(customPrimary, estiloVisual === "moderno" ? "#1C1410" : "#FAF6EE", 0.65);
-      const tintRgb = hexToRgb(tintHex);
-      overlays.push({
-        input: await sharp({
-          create: {
-            width: W,
-            height: H,
-            channels: 4,
-            background: { r: tintRgb.r, g: tintRgb.g, b: tintRgb.b, alpha: 0.16 },
-          },
-        })
+  // =========================================================================
+  // DISPOSIÇÃO 2: HORIZONTAL BIPARTIDA (Facebook 1640×624 e X 1500×500)
+  // Regra: informação à esquerda na zona segura móvel acima/à direita dos avatares + imagem à direita a sangrar
+  // =========================================================================
+  if (disposicao === "horizontal-bipartida") {
+    adapted = true;
+    const infoLeft = Math.max(mob.x + 22, deskMobAvatarRight + 10);
+    const splitX = Math.round(mob.x + mob.width * 0.625);
+    const infoWidth = Math.max(260, splitX - infoLeft - 14);
+    const infoTop = mob.y + Math.max(14, Math.round(mob.height * 0.04));
+    const infoHeight = Math.max(200, mob.height - Math.max(28, Math.round(mob.height * 0.08)));
+
+    const rightSceneStart = splitX - 18;
+    const rightSceneW = W - rightSceneStart;
+
+    if (estiloVisual === "moderno") {
+      // Ambiente esquerdo acima do avatar a sangrar para a borda esquerda de computador
+      const leftTopBleedW = Math.max(120, Math.round(mob.x * 0.96));
+      const leftTopBleedH = Math.max(120, (rede.avatarOverlapDesktop?.y || Math.round(H * 0.6)) - 20);
+      const leftBleed = await featherAndTintLayer(
+        await sharp(fornoParts.breadSoftScene)
+          .resize(leftTopBleedW, leftTopBleedH, { fit: "cover", position: "centre" })
+          .blur(1.25)
           .png()
           .toBuffer(),
-        left: 0,
-        top: 0,
-      });
+        { rightPx: 48, bottomPx: 64, opacity: 0.34 }
+      );
+
+      // Fotografia editorial hero com arco terracota do centro-direita até à borda W
+      const heroRight = await featherAndTintLayer(
+        await sharp(fornoParts.breadArchScene)
+          .resize(rightSceneW, H, { fit: "cover", position: "centre" })
+          .png()
+          .toBuffer(),
+        { leftPx: Math.min(180, Math.round(rightSceneW * 0.28)), opacity: 1 }
+      );
+
+      overlays.push(
+        { input: leftBleed, left: 0, top: 0 },
+        { input: heroRight, left: rightSceneStart, top: 0 }
+      );
+    } else {
+      // Clássico bipartido: pão dourado luminoso à direita fundido em pergaminho + espiga + filetes duplos
+      const heroRightClassic = await featherAndTintLayer(
+        await sharp(fornoParts.breadSoftScene)
+          .resize(rightSceneW, H, { fit: "cover", position: "centre" })
+          .modulate({ brightness: 1.16, saturation: 0.9 })
+          .png()
+          .toBuffer(),
+        { leftPx: Math.min(180, Math.round(rightSceneW * 0.34)), opacity: 0.72 }
+      );
+      overlays.push({ input: heroRightClassic, left: rightSceneStart, top: 0 });
+      overlays.push(
+        ...(await makeClassicDoubleBorderOverlays(W, H, Math.round(H * 0.032), borderColorRgb, 0.5))
+      );
     }
+
+    await placeBrandInfoInBox(
+      { x: infoLeft, y: infoTop, width: infoWidth, height: infoHeight },
+      "stack"
+    );
+
+    const finalBuf = await sharp({
+      create: { width: W, height: H, channels: 4, background: { ...canvasBgRgb, alpha: 1 } },
+    })
+      .composite(overlays)
+      .flatten({ background: canvasBgRgb })
+      .png()
+      .toBuffer();
+
+    return { buffer: finalBuf, fixtureNome: `docs/referencias/ia-aprovada/${masterName}`, adapted };
   }
 
-  const finalBuf = await sharp({
-    create: {
-      width: W,
-      height: H,
-      channels: 4,
-      background: { r: baseRgb.r, g: baseRgb.g, b: baseRgb.b, alpha: 1 },
+  // =========================================================================
+  // DISPOSIÇÃO 3: GOOGLE PERFIL DE EMPRESA (1024×576 — mais imagem, menos texto)
+  // Regra: >= 65% fotografia protagonista a sangrar; bloco compacto emblema + nome (sem slogan/contactos)
+  // =========================================================================
+  if (disposicao === "imagem-destaque-min-texto") {
+    adapted = true;
+    const photoLeft = Math.round(W * 0.22);
+    const photoW = W - photoLeft;
+
+    if (estiloVisual === "moderno") {
+      const hero = await featherAndTintLayer(
+        await sharp(fornoParts.breadArchScene)
+          .resize(photoW, H, { fit: "cover", position: "centre" })
+          .png()
+          .toBuffer(),
+        { leftPx: Math.min(260, Math.round(photoW * 0.36)), opacity: 1 }
+      );
+      overlays.push({ input: hero, left: photoLeft, top: 0 });
+    } else {
+      const heroClassic = await featherAndTintLayer(
+        await sharp(fornoParts.breadSoftScene)
+          .resize(photoW, H, { fit: "cover", position: "centre" })
+          .modulate({ brightness: 1.14, saturation: 0.92 })
+          .png()
+          .toBuffer(),
+        { leftPx: Math.min(260, Math.round(photoW * 0.38)), opacity: 0.86 }
+      );
+      overlays.push({ input: heroClassic, left: photoLeft, top: 0 });
+      overlays.push(...(await makeClassicDoubleBorderOverlays(W, H, 18, borderColorRgb, 0.48)));
+    }
+
+    // Compacto à esquerda estritamente dentro de safeZoneMobile (sem slogan nem contactos)
+    const boxW = Math.round(W * 0.28);
+    const boxH = Math.round(H * 0.56);
+    await placeBrandInfoInBox(
+      {
+        x: mob.x + 16,
+        y: Math.round(mob.y + (mob.height - boxH) / 2),
+        width: boxW,
+        height: boxH,
+      },
+      "stack-compact"
+    );
+
+    const finalBuf = await sharp({
+      create: { width: W, height: H, channels: 4, background: { ...canvasBgRgb, alpha: 1 } },
+    })
+      .composite(overlays)
+      .flatten({ background: canvasBgRgb })
+      .png()
+      .toBuffer();
+
+    return { buffer: finalBuf, fixtureNome: `docs/referencias/ia-aprovada/${masterName}`, adapted };
+  }
+
+  // =========================================================================
+  // DISPOSIÇÃO 4 & 5: VERTICAL FEED (Instagram 4:5 e 1:1) e STORY (9:16 com 250 px topo/base livres)
+  // Regra: composição vertical, logótipo mais destacado; Story com margens topo/base UI livres
+  // =========================================================================
+  adapted = true;
+  if (disposicao === "vertical-story") {
+    const safeTop = (rede.margemTopoPx || 250) + 20;
+    const safeBottom = H - (rede.margemBasePx || 250) - 20;
+    const safeH = safeBottom - safeTop;
+
+    // Camada (a) Fundo atmosférico calmo nas faixas de 250 px topo e base + laterais
+    const ambientStoryBg = await featherAndTintLayer(
+      await sharp(fornoParts.breadSoftScene)
+        .resize(W, H, { fit: "cover", position: "centre" })
+        .modulate(estiloVisual === "classico" ? { brightness: 1.24, saturation: 0.72 } : { brightness: 0.75 })
+        .blur(1.45)
+        .png()
+        .toBuffer(),
+      {
+        topPx: 140,
+        bottomPx: 140,
+        leftPx: 60,
+        rightPx: 60,
+        opacity: estiloVisual === "moderno" ? 0.28 : 0.16,
+      }
+    );
+    overlays.push({ input: ambientStoryBg, left: 0, top: 0 });
+
+    if (estiloVisual === "classico") {
+      overlays.push(...(await makeClassicDoubleBorderOverlays(W, H, 28, borderColorRgb, 0.45)));
+    }
+
+    // Metade superior dentro da zona segura do Story: fotografia hero apetitosa (y 270..920)
+    const photoH = Math.round(safeH * 0.45);
+    const photoBand = await featherAndTintLayer(
+      await sharp(estiloVisual === "moderno" ? fornoParts.breadArchScene : fornoParts.breadSoftScene)
+        .resize(mob.width, photoH, { fit: "cover", position: "centre" })
+        .modulate(estiloVisual === "classico" ? { brightness: 1.12, saturation: 0.92 } : {})
+        .png()
+        .toBuffer(),
+      { topPx: 28, bottomPx: 120, leftPx: 32, rightPx: 32, opacity: estiloVisual === "classico" ? 0.84 : 1 }
+    );
+    overlays.push({ input: photoBand, left: mob.x, top: safeTop });
+
+    // Metade inferior dentro da zona segura: emblema em destaque + wordmark + slogan
+    const infoTop = safeTop + photoH + 14;
+    const infoH = Math.max(320, safeBottom - infoTop - 8);
+    await placeBrandInfoInBox(
+      { x: mob.x + 24, y: infoTop, width: mob.width - 48, height: infoH },
+      "vertical-highlighted"
+    );
+
+    const finalBuf = await sharp({
+      create: { width: W, height: H, channels: 4, background: { ...canvasBgRgb, alpha: 1 } },
+    })
+      .composite(overlays)
+      .flatten({ background: canvasBgRgb })
+      .png()
+      .toBuffer();
+
+    return { buffer: finalBuf, fixtureNome: `docs/referencias/ia-aprovada/${masterName}`, adapted };
+  }
+
+  // DISPOSIÇÃO VERTICAL FEED (Instagram 4:5 1080×1350 & 1:1 1080×1080)
+  const is45 = H > W;
+  const topPhotoH = Math.round(H * (is45 ? 0.42 : 0.39));
+
+  if (estiloVisual === "moderno") {
+    // Suave nas margens extremas acima de `mob.y` para sangrar sem gerar arestas textuais
+    const photoTop = await featherAndTintLayer(
+      await sharp(fornoParts.breadArchScene)
+        .resize(W, topPhotoH, { fit: "cover", position: "centre" })
+        .blur(0.45)
+        .png()
+        .toBuffer(),
+      { topPx: Math.round(mob.y * 0.4), bottomPx: Math.round(topPhotoH * 0.36), leftPx: 24, rightPx: 24, opacity: 0.96 }
+    );
+    overlays.push({ input: photoTop, left: 0, top: 0 });
+  } else {
+    const photoTopCls = await featherAndTintLayer(
+      await sharp(fornoParts.breadSoftScene)
+        .resize(W, topPhotoH, { fit: "cover", position: "centre" })
+        .modulate({ brightness: 1.18, saturation: 0.85 })
+        .blur(0.85)
+        .png()
+        .toBuffer(),
+      { topPx: 40, bottomPx: Math.round(topPhotoH * 0.42), leftPx: 28, rightPx: 28, opacity: 0.42 }
+    );
+    overlays.push({ input: photoTopCls, left: 0, top: 0 });
+    overlays.push(...(await makeClassicDoubleBorderOverlays(W, H, 26, borderColorRgb, 0.5)));
+  }
+
+  const feedInfoTop = Math.max(mob.y + 12, topPhotoH - Math.round(H * 0.04));
+  const feedInfoH = Math.max(300, mob.y + mob.height - feedInfoTop - 16);
+
+  // Nos clássicos verticais, adornos de espiga simétricos estritamente dentro da zona móvel
+  if (estiloVisual === "classico" && !isCustomBrand && fornoParts.wheatLeft && fornoParts.wheatRight) {
+    const sprigH = Math.round(feedInfoH * 0.58);
+    const sprigW = Math.round(sprigH * 0.42);
+    const [wL, wR] = await Promise.all([
+      featherEdges(
+        await sharp(fornoParts.wheatLeft)
+          .resize(sprigW, sprigH, { fit: "contain", background: { ...canvasBgRgb, alpha: 0 } })
+          .png()
+          .toBuffer(),
+        { topPx: 8, bottomPx: 8, leftPx: 8, rightPx: 8 }
+      ),
+      featherEdges(
+        await sharp(fornoParts.wheatRight)
+          .resize(sprigW, sprigH, { fit: "contain", background: { ...canvasBgRgb, alpha: 0 } })
+          .png()
+          .toBuffer(),
+        { topPx: 8, bottomPx: 8, leftPx: 8, rightPx: 8 }
+      ),
+    ]);
+    overlays.push(
+      { input: wL, left: mob.x + 12, top: feedInfoTop + 18 },
+      { input: wR, left: mob.x + mob.width - sprigW - 12, top: feedInfoTop + 18 }
+    );
+  }
+
+  await placeBrandInfoInBox(
+    {
+      x: mob.x + (estiloVisual === "classico" ? 84 : 24),
+      y: feedInfoTop,
+      width: mob.width - (estiloVisual === "classico" ? 168 : 48),
+      height: feedInfoH,
     },
+    "vertical-highlighted"
+  );
+
+  const finalBuf = await sharp({
+    create: { width: W, height: H, channels: 4, background: { ...canvasBgRgb, alpha: 1 } },
   })
     .composite(overlays)
-    .flatten({ background: baseRgb })
+    .flatten({ background: canvasBgRgb })
     .png()
     .toBuffer();
 
@@ -878,7 +1691,7 @@ export class FalsoImagemProvider implements ImagemProvider {
           count === 2 && i === 1 && formato === "logotipo-classico"
             ? "logotipo-moderno"
             : formato;
-        const gen = await generateLogoFromApprovedRefs(effFormato, ronda, contexto);
+        const gen = await generateLogoFromApprovedRefs(effFormato, ronda);
         results.push({
           buffer: gen.buffer,
           mimeType: "image/png",
@@ -965,13 +1778,13 @@ export class FalsoImagemProvider implements ImagemProvider {
   async editar(
     imagem: Buffer,
     instrucao: string,
-    contexto?: ImagemContexto
+    _contexto?: ImagemContexto
   ): Promise<ImagemResultado> {
     const cleanInstr = (instrucao || "").trim().toLowerCase();
 
     let pipe = sharp(imagem).ensureAlpha();
     if (cleanInstr.includes("modern") || cleanInstr.includes("verde")) {
-      const mod = await generateLogoFromApprovedRefs("logotipo-moderno", 2, contexto);
+      const mod = await generateLogoFromApprovedRefs("logotipo-moderno", 2);
       return {
         buffer: mod.buffer,
         mimeType: "image/png",

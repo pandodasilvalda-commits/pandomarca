@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useId } from "react";
+import { Monitor, Smartphone } from "lucide-react";
 import {
   getZonaSeguraComum,
   type RedeSocialConfig,
@@ -29,16 +30,27 @@ export function SafeZoneSocialFrame({
   const zonaComum = getZonaSeguraComum(rede);
   const activeZone =
     viewport === "mobile" ? rede.safeZoneMobile : rede.safeZoneDesktop;
-  const strokeUnit = Math.max(2, Math.round(Math.min(rede.widthPx, rede.heightPx) / 140));
+  const activeAvatarOverlap =
+    viewport === "mobile"
+      ? rede.avatarOverlapMobile
+      : rede.avatarOverlapDesktop;
+  const strokeUnit = Math.max(
+    2,
+    Math.round(Math.min(rede.widthPx, rede.heightPx) / 130)
+  );
   const dashLen = strokeUnit * 3;
-  const fontSize = Math.max(12, Math.round(Math.min(rede.widthPx, rede.heightPx) / 22));
+  const fontSize = Math.max(
+    14,
+    Math.round(Math.min(rede.widthPx, rede.heightPx) / 22)
+  );
 
   return (
     <div
-      className="relative mx-auto overflow-hidden rounded-lg border border-stone-300 bg-stone-100 shadow-2xs"
+      data-viewport-frame={viewport}
+      className="relative mx-auto w-full overflow-hidden rounded-lg border border-stone-300 bg-stone-100 shadow-2xs"
       style={{
         aspectRatio: `${rede.widthPx} / ${rede.heightPx}`,
-        width: `min(100%, ${maxWidthPx}px)`,
+        maxWidth: `${maxWidthPx}px`,
       }}
     >
       <img
@@ -95,7 +107,7 @@ export function SafeZoneSocialFrame({
             </>
           ) : (
             <>
-              {/* Em vista telemóvel, escurece as laterais/margens fora da zona visível no telemóvel */}
+              {/* Em vista telemóvel, escurece as áreas exteriores à janela visível no telemóvel */}
               {viewport === "mobile" && (
                 <>
                   <defs>
@@ -117,7 +129,7 @@ export function SafeZoneSocialFrame({
                   <rect
                     width={rede.widthPx}
                     height={rede.heightPx}
-                    fill="rgba(15, 23, 42, 0.46)"
+                    fill="rgba(15, 23, 42, 0.48)"
                     mask={`url(#${maskId}_mob)`}
                   />
                 </>
@@ -181,43 +193,63 @@ export function SafeZoneSocialFrame({
                 </>
               )}
 
-              {/* Zona de sobreposição de avatar em capas de computador */}
-              {showSafeZones &&
-                viewport === "desktop" &&
-                rede.avatarOverlapDesktop && (
-                  <g>
-                    <rect
-                      x={rede.avatarOverlapDesktop.x}
-                      y={rede.avatarOverlapDesktop.y}
-                      width={rede.avatarOverlapDesktop.width}
-                      height={rede.avatarOverlapDesktop.height}
-                      rx={strokeUnit * 2}
-                      fill="rgba(245, 158, 11, 0.24)"
-                      stroke="#F59E0B"
-                      strokeWidth={strokeUnit}
-                      strokeDasharray={`${dashLen} ${dashLen}`}
-                    />
-                    <circle
-                      cx={
-                        rede.avatarOverlapDesktop.x +
-                        rede.avatarOverlapDesktop.width / 2
-                      }
-                      cy={
-                        rede.avatarOverlapDesktop.y +
-                        rede.avatarOverlapDesktop.height / 2
-                      }
-                      r={
+              {/* Zona de sobreposição da foto de perfil (Computador e Telemóvel) */}
+              {showSafeZones && activeAvatarOverlap && (
+                <g>
+                  <rect
+                    x={activeAvatarOverlap.x}
+                    y={activeAvatarOverlap.y}
+                    width={activeAvatarOverlap.width}
+                    height={activeAvatarOverlap.height}
+                    rx={strokeUnit * 2}
+                    fill="rgba(245, 158, 11, 0.25)"
+                    stroke="#F59E0B"
+                    strokeWidth={strokeUnit}
+                    strokeDasharray={`${dashLen} ${dashLen}`}
+                  />
+                  <circle
+                    cx={activeAvatarOverlap.x + activeAvatarOverlap.width / 2}
+                    cy={activeAvatarOverlap.y + activeAvatarOverlap.height / 2}
+                    r={
+                      Math.min(
+                        activeAvatarOverlap.width,
+                        activeAvatarOverlap.height
+                      ) * 0.38
+                    }
+                    fill="rgba(15, 23, 42, 0.58)"
+                    stroke="#FBBF24"
+                    strokeWidth={strokeUnit * 0.9}
+                  />
+                  <text
+                    x={activeAvatarOverlap.x + activeAvatarOverlap.width / 2}
+                    y={
+                      activeAvatarOverlap.y +
+                      activeAvatarOverlap.height / 2 +
+                      Math.max(
+                        11,
                         Math.min(
-                          rede.avatarOverlapDesktop.width,
-                          rede.avatarOverlapDesktop.height
-                        ) * 0.4
-                      }
-                      fill="rgba(15, 23, 42, 0.5)"
-                      stroke="#FBBF24"
-                      strokeWidth={strokeUnit * 0.85}
-                    />
-                  </g>
-                )}
+                          activeAvatarOverlap.width,
+                          activeAvatarOverlap.height
+                        ) * 0.09
+                      )
+                    }
+                    textAnchor="middle"
+                    fill="#FEF3C7"
+                    fontSize={Math.max(
+                      16,
+                      Math.round(
+                        Math.min(
+                          activeAvatarOverlap.width,
+                          activeAvatarOverlap.height
+                        ) * 0.24
+                      )
+                    )}
+                    fontWeight="700"
+                  >
+                    Foto
+                  </text>
+                </g>
+              )}
 
               {/* Retângulo da zona segura ativa (computador ou telemóvel) */}
               {showSafeZones && (
@@ -248,6 +280,107 @@ export function SafeZoneSocialFrame({
             </>
           )}
         </svg>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Vista dupla obrigatória: mostra sempre LADO A LADO Computador e Telemóvel,
+ * assinalando zonas seguras e áreas ocupadas pela foto de perfil em ambos.
+ */
+export function SafeZoneDualPreview({
+  rede,
+  imageUrl,
+  alt,
+  showSafeZones,
+  maxHeightPx = 180,
+}: {
+  rede: RedeSocialConfig;
+  imageUrl: string;
+  alt: string;
+  showSafeZones: boolean;
+  maxHeightPx?: number;
+}) {
+  const hasAvatarZone = Boolean(
+    rede.avatarOverlapDesktop || rede.avatarOverlapMobile || rede.isCircle
+  );
+
+  return (
+    <div data-dual-preview={rede.id} className="space-y-2">
+      <div className="grid grid-cols-2 gap-2 sm:gap-3 items-start">
+        <div
+          data-dual-column="desktop"
+          className="min-w-0 rounded-xl border border-stone-200 bg-white/80 p-2 space-y-1.5"
+        >
+          <div className="flex items-center justify-between gap-1 text-[11px] font-bold text-stone-800">
+            <span className="inline-flex items-center gap-1 truncate">
+              <Monitor className="h-3.5 w-3.5 shrink-0 text-stone-700" />
+              <span className="truncate">Computador</span>
+            </span>
+            <span className="hidden sm:inline font-mono text-[9px] font-semibold text-stone-500 shrink-0">
+              {rede.safeZoneDesktop.width}×{rede.safeZoneDesktop.height}
+            </span>
+          </div>
+          <SafeZoneSocialFrame
+            rede={rede}
+            imageUrl={imageUrl}
+            alt={`${alt} — vista computador`}
+            viewport="desktop"
+            showSafeZones={showSafeZones}
+            maxHeightPx={maxHeightPx}
+          />
+        </div>
+
+        <div
+          data-dual-column="mobile"
+          className="min-w-0 rounded-xl border border-stone-200 bg-white/80 p-2 space-y-1.5"
+        >
+          <div className="flex items-center justify-between gap-1 text-[11px] font-bold text-stone-800">
+            <span className="inline-flex items-center gap-1 truncate">
+              <Smartphone className="h-3.5 w-3.5 shrink-0 text-amber-800" />
+              <span className="truncate">Telemóvel</span>
+            </span>
+            <span className="hidden sm:inline font-mono text-[9px] font-semibold text-stone-500 shrink-0">
+              {rede.safeZoneMobile.width}×{rede.safeZoneMobile.height}
+            </span>
+          </div>
+          <SafeZoneSocialFrame
+            rede={rede}
+            imageUrl={imageUrl}
+            alt={`${alt} — vista telemóvel`}
+            viewport="mobile"
+            showSafeZones={showSafeZones}
+            maxHeightPx={maxHeightPx}
+          />
+        </div>
+      </div>
+
+      {showSafeZones && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[10px] font-medium text-stone-600">
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2.5 w-2.5 rounded-xs border-2 border-dashed border-emerald-500" />
+            Zona segura (PC / Móvel)
+          </span>
+          {hasAvatarZone && (
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2.5 w-2.5 rounded-full border-2 border-amber-500 bg-amber-500/20" />
+              Foto de perfil
+            </span>
+          )}
+          {rede.id === "yt-banner" && (
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2.5 w-2.5 rounded-xs border-2 border-sky-400" />
+              Centro 1546×423
+            </span>
+          )}
+          {rede.id === "ig-story" && (
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2.5 w-2.5 rounded-xs border border-red-400 bg-red-500/25" />
+              250 px UI livre
+            </span>
+          )}
+        </div>
       )}
     </div>
   );

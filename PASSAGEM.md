@@ -1,14 +1,14 @@
 # PASSAGEM — PandoMarca
 
-> Última atualização: 2026-11-16 21:25 (Lisboa) · por Programador (caixa, ficheiros de passagem)
+> Última atualização: 2026-11-16 22:18 (Lisboa) · por Antigravity
 > Última verificação de quota: Antigravity (relato do operador, 16/11/2026, Lisboa): Gemini semanal 71 % · 5 h 96 % · Argon semanal 14 % · Claude/GPT 100 % · renovação semanal 23/11/2026 ~11h–12h Lisboa. Não verificada de novo nesta sessão.
 
 ## 1. Objetivo do produto
 O PandoMarca é o kit de identidade visual da PandoWeb para PME: parte de um logótipo (gerado na Entrada A ou carregado na Entrada B) e entrega um ZIP com exactamente 38 ficheiros (variantes, 18 peças para redes sociais, favicon, assinatura de email, cartão, papel de carta e guia). Toda a geração visual é só por imagem: o logótipo escolhido é a referência obrigatória de todas as peças seguintes. A interface, a documentação e os ficheiros gerados estão em pt-PT.
 
 ## 2. Fase atual
-- Fase: arquitetura só-imagem (plano em docs/SPEC.md; 38 formatos, zonas seguras por rede, tons da marca)
-- Estado: em revisão — o código e as capturas já estão em `main` (commit `4ad873f`); falta a revisão humana e a decisão do fornecedor/orçamento para o modo real
+- Fase: arquitetura só-imagem com composição própria por formato em 3 camadas (`lib/config/redes-sociais.ts`, `lib/capas/safe-zone.ts`, `lib/imagem/falso.ts` e vista dupla lado a lado em `components/`)
+- Estado: pedido «msg7» concluído e validado (16/16 testes Vitest, `next build` OK, Playwright desktop/telemóvel com 0 px overflow e ZIP de 38 ficheiros + 10 capturas inspecionadas em `docs/revisao/composicao/`); aguarda revisão humana do Bernardo antes da decisão do modo real
 
 ## 3. Feito (com commits)
 | Data | Commit | O quê |
@@ -19,21 +19,23 @@ O PandoMarca é o kit de identidade visual da PandoWeb para PME: parte de um log
 | 2026-11-16 | `d830f9b` | Referências de IA aprovadas pelo Bernardo em `docs/referencias/ia-aprovada/` (logótipo e capas Forno da Vilariça) |
 | 2026-11-16 | `1cbdf07` | Removidos o preço inventado (160 €) e notas internas dos ecrãs públicos |
 | 2026-11-16 | `4ad873f` | Só-imagem: referência obrigatória, zonas seguras desktop/telemóvel, 38 formatos, 18 redes em `lib/config/redes-sociais.ts`, capturas em `docs/revisao/so-imagem/` |
+| 2026-11-16 | `8d200ea` | Documentação de passagem: `PASSAGEM.md`, `AGENTS.md` e `docs/REGRAS_LIMITES.md` |
+| 2026-11-16 | `msg7` (atual) | Composição própria por formato em 3 camadas, hierarquia de corte centralizada, auditoria móvel/avatar, pré-visualização Computador + Telemóvel lado a lado e 10 capturas em `docs/revisao/composicao/` |
 
 ## 4. Testes
-- Comando: `npm test` (também `npx tsc --noEmit` e `npm run lint`)
-- Resultado do último run: 12 testes no ficheiro `tests/pandomarca.test.ts` (acesso, 38 formatos, camada só-imagem, zonas seguras, vetorização opcional). Run desta sessão não repetido; o commit `4ad873f` inclui a actualização destes testes.
-- Testes a falhar e porquê: não verificado nesta sessão
+- Comando: `npx tsc --noEmit && npm run lint && npm test && npm run build`
+- Resultado do último run (2026-11-16 22:16 Lisboa): TypeScript 0 erros; ESLint 0 erros (18 avisos pré-existentes de `<img>` e parâmetros `_`); Vitest **16/16** testes a passar (inclui 4 novos testes de composição própria, sangria fotográfica natural, hierarquia 1.º logótipo → 4.º contactos e colisão de avatar móvel/desktop); Next.js `build` OK; Playwright E2E desktop (`1440×960`) e telemóvel (`390×844`) com `overflow=0px` e `pandomarca-forno-da-vilarica.zip` verificado com 38 ficheiros.
+- Testes a falhar e porquê: nenhum.
 
 ## 5. Em curso (ponto exato onde parou)
-- Tarefa: nenhuma no repositório neste momento. O pedido «msg6» (geração só de imagem, perfis e capas por rede, zonas seguras, capturas em `docs/revisao/so-imagem/`) já foi integrado em `main` no commit `4ad873f` (16/11/2026, 17:10 Lisboa).
-- Ficheiros tocados: ver esse commit (entre outros: `lib/imagem/`, `lib/config/redes-sociais.ts`, `lib/capas/safe-zone.ts`, `components/kit-studio-wizard.tsx`, `docs/revisao/so-imagem/`)
-- Último passo concluído: arquitectura só-imagem e 6 capturas de revisão no repositório
-- Falta: revisão humana das capturas e decisão do Bernardo sobre o modo real
+- Tarefa: pedido «msg7» concluído e entregue em `main`.
+- Ficheiros tocados: `lib/config/redes-sociais.ts`, `lib/capas/safe-zone.ts`, `lib/imagem/{falso.ts,index.ts,prompts/{capa-fundo,publicacao-instagram,story-instagram}.md}`, `components/{safe-zone-preview.tsx,kit-studio-wizard.tsx}`, `tests/pandomarca.test.ts`, `docs/revisao/composicao/*.png`, `PASSAGEM.md`.
+- Último passo concluído: atualização final dos recortes de emblema/wordmark/slogan, validação completa e inspeção visual das 10 capturas em `docs/revisao/composicao/`.
+- Falta: revisão humana das 10 capturas em `docs/revisao/composicao/` pelo Bernardo e decisão explícita sobre fornecedor/orçamento para o modo real.
 - Ramo: `main`
 
 ## 6. Próximos passos (por ordem, cada um verificável)
-1. Rever as capturas em `docs/revisao/so-imagem/` (consistência com o logótipo de referência, zonas seguras em computador e telemóvel, fotos de perfil em círculo a 40 px, tom da marca) — critério de «feito»: revisão mostrada ao Bernardo.
+1. Rever as 10 capturas em `docs/revisao/composicao/` (composições próprias por proporção, vista dupla Computador + Telemóvel lado a lado, zonas seguras móveis, avatares desktop/mobile e margens Story 250 px) — critério de «feito»: revisão aprovada pelo Bernardo.
 2. Bernardo decide o fornecedor e o orçamento do modo real (recomendação já feita: Nano Banana 2.1, cerca de 0,60 USD por kit) — critério de «feito»: ordem explícita, por escrito.
 3. Só depois dessa ordem: ligar o adaptador Gemini em ambiente local de teste, com `GEMINI_API_KEY` só em variáveis de ambiente, sem publicação — critério de «feito»: modo real a gerar no computador de desenvolvimento, testes a passar, sem custos escondidos.
 
@@ -41,6 +43,7 @@ O PandoMarca é o kit de identidade visual da PandoWeb para PME: parte de um log
 - 2026-11-16 — Geração só de imagem, sem vetores desenhados por código nas peças sociais — o Bernardo rejeitou a composição por SVG/regras; não ficava bem.
 - 2026-11-16 — O logótipo gerado e escolhido é a imagem de referência de todas as peças seguintes, para manter consistência.
 - 2026-11-16 — Cada rede social tem o seu formato de foto de perfil e de capa, com margens/zonas seguras em computador e em telemóvel, e o tom visual ajusta-se a cada marca (6 tons).
+- 2026-11-16 — Composição própria por formato em 3 camadas (fundo/ambiente com sangria permitida, bloco informativo dentro da zona segura móvel segundo hierarquia 1.º logótipo → 2.º nome → 3.º slogan → 4.º contactos, e reserva de avatar desktop/telemóvel) apresentada lado a lado em Computador + Telemóvel.
 - 2026-11-16 — Modo falso por omissão (`IMAGEM_MODO=falso`); o adaptador Gemini não faz chamadas pagas sem `GEMINI_API_KEY`.
 - 2026-11-16 — As referências aprovadas estão em `docs/referencias/ia-aprovada/` (`d830f9b`) e não se substituem sem o Bernardo.
 - 2026-11-16 — Ecrãs públicos sem preços inventados nem notas internas (`1cbdf07`). Preço do kit `standalone` continua «a definir». Sem checkout.
@@ -56,7 +59,7 @@ O PandoMarca é o kit de identidade visual da PandoWeb para PME: parte de um log
 - Variáveis de ambiente: ver `.env.example` (nomes apenas, nunca valores). Chaves `GEMINI_API_KEY` e `RECRAFT_API_KEY` ficam vazias no exemplo.
 - Correr: `npm run dev` → abrir http://127.0.0.1:4317 (ensaio «Forno da Vilariça» no assistente)
 - Testar: `npx tsc --noEmit && npm run lint && npm test`
-- Capturas de revisão: `docs/revisao/so-imagem/` (e anteriores em `docs/revisao/fase-ia/`, `docs/revisao/logotipos/`)
+- Capturas de revisão: `docs/revisao/composicao/` (e anteriores em `docs/revisao/so-imagem/`, `docs/revisao/fase-ia/`, `docs/revisao/logotipos/`)
 
 ## 10. Não tocar
 - `docs/referencias/ia-aprovada/` — referências aprovadas pelo Bernardo; são a base do modo falso e da consistência visual
@@ -74,3 +77,4 @@ O PandoMarca é o kit de identidade visual da PandoWeb para PME: parte de um log
 | Data | Ferramenta / modelo | Resumo de 1 linha |
 | --- | --- | --- |
 | 2026-11-16 21:25 | Programador (caixa) | Criados PASSAGEM.md, AGENTS.md e docs/REGRAS_LIMITES.md; msg6 já estava em `4ad873f` |
+| 2026-11-16 22:18 | Antigravity | Concluído pedido msg7: composição própria por formato em 3 camadas, auditoria móvel/avatar, vista dupla lado a lado e 10 capturas em `docs/revisao/composicao/` |

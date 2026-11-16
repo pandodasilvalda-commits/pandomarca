@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import {
   getRedeSocialConfig,
+  resolverHierarquiaInformacaoConfig,
   TOM_DA_MARCA_SPECS,
   type RedeSocialId,
   type TomDaMarca,
@@ -459,37 +460,7 @@ export function buildTextosPedidosParaPeca(
   redeId: RedeSocialId
 ): string[] {
   const cfg = getRedeSocialConfig(redeId);
-  const nome = (dados.nome || "").trim();
-  const slogan = (dados.slogan || "").trim();
-  const servicos = (dados.servicos || "").trim();
-  const morada = (dados.morada || "").trim();
-  const telefone = (dados.telefone || "").trim();
-  const website = (dados.website || "").trim().replace(/^https?:\/\//i, "");
-
-  if (cfg.tipoPeca === "perfil") {
-    // Avatares nascem apenas do emblema (sem texto miúdo para ler bem a 40 px)
-    return [];
-  }
-
-  const lines: string[] = [];
-  if (nome) lines.push(nome);
-  if (slogan) lines.push(slogan);
-
-  if (cfg.tipoPeca === "publicacao" || cfg.tipoPeca === "story") {
-    if (servicos) lines.push(servicos);
-    if (website) lines.push(website);
-  } else {
-    // Capas / cabeçalhos panorâmicos
-    if (redeId === "li-capa-empresa" || redeId === "yt-banner") {
-      if (website) lines.push(website);
-    } else {
-      if (servicos) lines.push(servicos);
-      if (morada) lines.push(morada);
-      if (telefone) lines.push(telefone);
-    }
-  }
-
-  return lines;
+  return resolverHierarquiaInformacaoConfig(dados, cfg).textosOrdenados;
 }
 
 const brandPieceCache = new Map<string, PecaGeradaIA>();
@@ -511,7 +482,7 @@ function digestBufferShort(buf?: Buffer): string {
 /**
  * Pipeline único puro de geração por imagem para as 18 peças sociais:
  * 1. Exige o logótipo escolhido como referência obrigatória (`logotipoReferencia`).
- * 2. Constrói o prompt a partir do tom da marca + sector + proporção nativa + zona segura + textos reais.
+ * 2. Constrói o prompt a partir do tom da marca + sector + proporção nativa + disposição por proporção + zona segura + hierarquia de textos reais.
  * 3. Pede ao fornecedor (`provider.gerar`), corta/redimensiona às dimensões exactas e valida as zonas seguras.
  * 4. Guarda `textosPedidos`, aviso «Verifique os textos» e resultado de auditoria (`precisaRegeneracao`).
  */
@@ -555,7 +526,9 @@ export async function gerarPecaRedeSocialComAuditoria(params: {
   const textosPedidos = buildTextosPedidosParaPeca(params.dados, params.redeId);
 
   const cacheKey = [
+    "comp-v2",
     params.redeId,
+    rede.composicao.disposicao,
     params.estiloVisual,
     tom,
     sector,
@@ -607,6 +580,8 @@ export async function gerarPecaRedeSocialComAuditoria(params: {
       tomDescricao: tomSpec.direcaoEstetica,
       aspectRatio: rede.aspectRatioGemini,
       layoutNome,
+      disposicaoLayout: rede.composicao.disposicaoRotulo,
+      regraComposicao: rede.composicao.regraComposicaoPrompt,
       estiloPeca: direcaoVisual,
       formasDoLogotipo: dna.formasPrincipais,
       estiloDoLogotipo: dna.estiloEstetico,
@@ -626,6 +601,8 @@ export async function gerarPecaRedeSocialComAuditoria(params: {
       tomDescricao: tomSpec.direcaoEstetica,
       aspectRatio: rede.aspectRatioGemini,
       layoutNome,
+      disposicaoLayout: rede.composicao.disposicaoRotulo,
+      regraComposicao: rede.composicao.regraComposicaoPrompt,
       estiloPeca: direcaoVisual,
       formasDoLogotipo: dna.formasPrincipais,
       estiloDoLogotipo: dna.estiloEstetico,
@@ -643,6 +620,8 @@ export async function gerarPecaRedeSocialComAuditoria(params: {
       plataforma: rede.nome,
       aspectRatio: rede.aspectRatioGemini,
       layoutNome,
+      disposicaoLayout: rede.composicao.disposicaoRotulo,
+      regraComposicao: rede.composicao.regraComposicaoPrompt,
       layoutDirecaoVisual: direcaoVisual,
       formasDoLogotipo: dna.formasPrincipais,
       estiloDoLogotipo: dna.estiloEstetico,

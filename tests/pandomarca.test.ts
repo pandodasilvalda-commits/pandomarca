@@ -1,11 +1,15 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it, expect, beforeAll } from "vitest";
 import sharp from "sharp";
 import JSZip from "jszip";
 import { PDFDocument } from "pdf-lib";
 import {
   getRedeSocialConfig,
+  HIERARQUIA_INFORMACAO_PADRAO,
   REDES_SOCIAIS_CONFIG,
   REDES_SOCIAIS_LIST,
+  resolverHierarquiaInformacaoConfig,
   TONS_DA_MARCA_LIST,
   type TomDaMarca,
 } from "@/lib/config/redes-sociais";
@@ -739,5 +743,219 @@ describe("Auditoria de Zonas Seguras, Dados Reais, Vetorização Opcional e Rege
         logotipoReferencia: Buffer.alloc(0),
       })
     ).rejects.toThrow(/obrigatório como imagem de referência/);
+  });
+});
+
+describe("Composição própria por formato, camadas, hierarquia de corte e zona móvel/avatar", () => {
+  it("define regras de disposição e hierarquia 1.º logótipo -> 2.º nome -> 3.º slogan -> 4.º contactos junto das medidas", () => {
+    for (const spec of REDES_SOCIAIS_LIST) {
+      expect(spec.composicao.hierarquiaInformacao).toEqual(HIERARQUIA_INFORMACAO_PADRAO);
+      expect(spec.composicao.camadas.fundo.length).toBeGreaterThan(10);
+      expect(spec.composicao.camadas.informacao.length).toBeGreaterThan(10);
+      expect(spec.composicao.camadas.uiPlataforma.length).toBeGreaterThan(10);
+      if (spec.tipoPeca !== "perfil") {
+        expect(spec.composicao.fundoPodeExtravasarMobile).toBe(true);
+      }
+    }
+
+    expect(getRedeSocialConfig("li-capa-pessoal").composicao.disposicao).toBe("faixa-ultra-larga");
+    expect(getRedeSocialConfig("li-capa-empresa").composicao.disposicao).toBe("faixa-ultra-larga");
+    expect(getRedeSocialConfig("yt-banner").composicao.disposicao).toBe("faixa-ultra-larga");
+
+    expect(getRedeSocialConfig("fb-capa").composicao.disposicao).toBe("horizontal-bipartida");
+    expect(getRedeSocialConfig("fb-capa").avatarOverlapMobile).toBeDefined();
+    expect(getRedeSocialConfig("x-cabecalho").composicao.disposicao).toBe("horizontal-bipartida");
+    expect(getRedeSocialConfig("x-cabecalho").avatarOverlapMobile).toBeDefined();
+
+    expect(getRedeSocialConfig("gb-capa").composicao.disposicao).toBe("imagem-destaque-min-texto");
+    expect(getRedeSocialConfig("ig-publicacao-1080x1350").composicao.disposicao).toBe("vertical-feed");
+    expect(getRedeSocialConfig("ig-publicacao").composicao.disposicao).toBe("vertical-feed");
+    expect(getRedeSocialConfig("ig-story").composicao.disposicao).toBe("vertical-story");
+  });
+
+  it("corta automaticamente slogan longo e contactos conforme a hierarquia de cada proporção", () => {
+    const forno = SAMPLE_BRANDS["forno-da-vilarica"];
+    const dadosCompletos = {
+      ...forno.dados,
+      slogan: "Pão artesanal de massa mãe cozido em forno a lenha todos os dias desde 1954",
+    };
+
+    // Faixas ultra-largas e Google Capa: só emblema + nome (cortam slogan e contactos)
+    for (const id of ["li-capa-pessoal", "li-capa-empresa", "yt-banner", "gb-capa"] as const) {
+      const spec = getRedeSocialConfig(id);
+      const h = resolverHierarquiaInformacaoConfig(dadosCompletos, spec);
+      expect(h.incluirLogotipo).toBe(true);
+      expect(h.incluirNome).toBe(true);
+      expect(h.incluirSlogan).toBe(false);
+      expect(h.incluirContactos).toBe(false);
+      expect(buildTextosPedidosParaPeca(dadosCompletos, id)).toEqual(["Forno da Vilariça"]);
+    }
+
+    // X Cabeçalho (maxCharsSlogan 44): corta slogan longo, mas mantém slogan curto; corta sempre contactos
+    expect(buildTextosPedidosParaPeca(dadosCompletos, "x-cabecalho")).toEqual([
+      "Forno da Vilariça",
+    ]);
+    expect(
+      buildTextosPedidosParaPeca(
+        { ...dadosCompletos, slogan: "Padaria em forno a lenha" },
+        "x-cabecalho"
+      )
+    ).toEqual(["Forno da Vilariça", "Padaria em forno a lenha"]);
+
+    // Facebook capa aceita slogan <= 56 caracteres sem contactos
+    expect(buildTextosPedidosParaPeca({ ...forno.dados }, "fb-capa")).toEqual([
+      "Forno da Vilariça",
+      "Pão de trigo ao nascer do dia",
+    ]);
+
+    // IG Story aceita logótipo, nome, slogan e 1 linha de contacto curto
+    expect(buildTextosPedidosParaPeca({ ...forno.dados }, "ig-story")).toEqual([
+      "Forno da Vilariça",
+      "Pão de trigo ao nascer do dia",
+      "fornodavilarica.pt",
+    ]);
+  });
+
+  it("chumba texto/logo fora da zona segura móvel ou sob foto de perfil móvel, mas aceita sangria de fotografia", async () => {
+    const fbSpec = getRedeSocialConfig("fb-capa");
+
+    // 1. Texto/letras fora da zona segura móvel (margem esquerda de desktop, x < 280) deve chumbar
+    const badOuterTextSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1640" height="624">
+      <rect width="1640" height="624" fill="#FAF6F0"/>
+      <rect x="400" y="140" width="840" height="320" fill="#B84A24"/>
+      ${Array.from({ length: 14 }, (_, i) => `<rect x="${20 + i * 16}" y="80" width="8" height="220" fill="#111111"/>`).join("")}
+    </svg>`;
+    const auditOuter = await validarZonaSegura(
+      await sharp(Buffer.from(badOuterTextSvg)).png().toBuffer(),
+      fbSpec
+    );
+    expect(auditOuter.precisaRegeneracao).toBe(true);
+    expect(auditOuter.informacaoDentroZonaSeguraMobile).toBe(false);
+
+    // 2. Elementos de alto contraste dentro de avatarOverlapMobile devem chumbar avatarSemSobreposicaoMovel
+    const mobAv = fbSpec.avatarOverlapMobile!;
+    const badMobAvatarSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1640" height="624">
+      <rect width="1640" height="624" fill="#FAF6F0"/>
+      <rect x="560" y="140" width="600" height="280" fill="#B84A24"/>
+      ${Array.from({ length: 9 }, (_, i) => `<rect x="${mobAv.x + 12 + i * 18}" y="${mobAv.y + 18}" width="10" height="140" fill="#111111"/>`).join("")}
+    </svg>`;
+    const auditMobAv = await validarZonaSegura(
+      await sharp(Buffer.from(badMobAvatarSvg)).png().toBuffer(),
+      fbSpec
+    );
+    expect(auditMobAv.precisaRegeneracao).toBe(true);
+    expect(auditMobAv.avatarSemSobreposicaoMovel).toBe(false);
+
+    // 3. Fotografia natural da capa aprovada a sangrar até à margem direita fora da zona móvel deve PASSAR
+    const refModernaPath = path.resolve(
+      process.cwd(),
+      "docs/referencias/ia-aprovada/capa-moderna.jpg"
+    );
+    const refModerna = fs.readFileSync(refModernaPath);
+    const breadBleedRight = await sharp(refModerna)
+      .extract({ left: 604, top: 0, width: 676, height: 720 })
+      .resize(620, 624, { fit: "cover", position: "centre" })
+      .png()
+      .toBuffer();
+    const safeInfoPlate = await sharp({
+      create: { width: 420, height: 320, channels: 4, background: { r: 250, g: 245, b: 226, alpha: 1 } },
+    })
+      .png()
+      .toBuffer();
+    const composedNaturalBleed = await sharp({
+      create: { width: 1640, height: 624, channels: 4, background: { r: 39, g: 20, b: 13, alpha: 1 } },
+    })
+      .composite([
+        { input: breadBleedRight, left: 1020, top: 0 },
+        { input: safeInfoPlate, left: 560, top: 120 },
+      ])
+      .flatten({ background: { r: 39, g: 20, b: 13 } })
+      .png()
+      .toBuffer();
+
+    const auditBleed = await validarZonaSegura(composedNaturalBleed, fbSpec);
+    expect(auditBleed.precisaRegeneracao, `Motivos inesperados: ${auditBleed.motivos.join("; ")}`).toBe(false);
+    expect(auditBleed.informacaoDentroZonaSeguraMobile).toBe(true);
+    expect(auditBleed.avatarSemSobreposicao).toBe(true);
+    expect(auditBleed.avatarSemSobreposicaoMovel).toBe(true);
+  });
+
+  it("gera composições próprias modernas e clássicas sem falhas nas 18 peças (Forno e marca personalizada Entrada B)", async () => {
+    const sessId = `teste_composicoes_${Date.now()}`;
+    limparOrcamentoKit(sessId);
+    const forno = SAMPLE_BRANDS["forno-da-vilarica"];
+    const basePaleta = buildBrandPalette({
+      primaria: "#B84A24",
+      secundaria: "#D9822B",
+      papel: "#FAF6F0",
+      tinta: "#2A1810",
+    });
+
+    const refLogoBuf = fs.readFileSync(
+      path.resolve(process.cwd(), "docs/referencias/ia-aprovada/logo.jpg")
+    );
+    const dna = buildLogoVisualDna({
+      nome: forno.dados.nome,
+      sector: forno.dados.sector,
+      tom: "tradicional",
+      paleta: basePaleta,
+      estiloDirecao: "moderno",
+    });
+
+    // Verifica ambos estilos nas representações críticas de cada proporção
+    for (const redeId of [
+      "fb-capa",
+      "li-capa-pessoal",
+      "li-capa-empresa",
+      "yt-banner",
+      "x-cabecalho",
+      "gb-capa",
+      "ig-publicacao-1080x1350",
+      "ig-story",
+    ] as const) {
+      const [mod, cls] = await gerarDuasPropostasVisualMarca({
+        redeId,
+        dados: { ...forno.dados, tom: "tradicional" },
+        paleta: basePaleta,
+        logotipoReferencia: refLogoBuf,
+        logotipoDna: dna,
+        sessaoId: sessId,
+      });
+
+      expect(mod.audit.valida, `Moderno falhou em ${redeId}: ${mod.audit.motivos.join("; ")}`).toBe(true);
+      expect(cls.audit.valida, `Clássico falhou em ${redeId}: ${cls.audit.motivos.join("; ")}`).toBe(true);
+      expect(Buffer.compare(mod.buffer, cls.buffer)).not.toBe(0);
+    }
+
+    // Marca personalizada Entrada B (Oficina do São, tom técnico)
+    const oficina = SAMPLE_BRANDS["oficina-do-sao"];
+    const { meta: ofMeta, processedPng: ofPng } = await analyzeAndStoreLogo({
+      buffer: Buffer.from(oficina.svg, "utf8"),
+      filename: "oficina.svg",
+      mimeType: "image/svg+xml",
+      entrada: "B",
+    });
+    const ofDna = buildLogoVisualDna({
+      nome: oficina.dados.nome,
+      sector: oficina.dados.sector,
+      tom: "tecnico",
+      paleta: ofMeta.paletaExtraida,
+      estiloDirecao: "moderno",
+    });
+
+    for (const redeId of ["fb-capa", "li-capa-pessoal", "yt-banner", "gb-capa", "ig-story"] as const) {
+      const [mod, cls] = await gerarDuasPropostasVisualMarca({
+        redeId,
+        dados: { ...oficina.dados, tom: "tecnico" },
+        paleta: ofMeta.paletaExtraida,
+        logotipoReferencia: ofPng,
+        logotipoDna: ofDna,
+        sessaoId: sessId,
+      });
+      expect(mod.audit.valida, `Oficina moderno em ${redeId}: ${mod.audit.motivos.join("; ")}`).toBe(true);
+      expect(cls.audit.valida, `Oficina clássico em ${redeId}: ${cls.audit.motivos.join("; ")}`).toBe(true);
+    }
+
+    limparOrcamentoKit(sessId);
   });
 });

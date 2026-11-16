@@ -59,7 +59,7 @@ import type {
   OrcamentoKitEstado,
   PublicImagemConfig,
 } from "@/lib/imagem";
-import { Circle40pxTestPreview, SafeZoneSocialFrame } from "./safe-zone-preview";
+import { Circle40pxTestPreview, SafeZoneDualPreview } from "./safe-zone-preview";
 import {
   PecaPropostaPreview,
   StudioSessionSnapshot,
@@ -114,12 +114,15 @@ const DEFAULT_IMAGEM_CONFIG: PublicImagemConfig = {
 
 const PROPOSTA_FEATURED_REDES: { id: RedeSocialId; label: string }[] = [
   { id: "fb-capa", label: "Facebook Capa (1640×624)" },
+  { id: "li-capa-pessoal", label: "LinkedIn Pessoal (1584×396)" },
+  { id: "li-capa-empresa", label: "LinkedIn Página (1128×191)" },
+  { id: "yt-banner", label: "YouTube Banner (2560×1440)" },
+  { id: "x-cabecalho", label: "X Cabeçalho (1500×500)" },
+  { id: "gb-capa", label: "Google Capa (1024×576)" },
   { id: "ig-publicacao-1080x1350", label: "IG Feed 4:5 (1080×1350)" },
   { id: "ig-publicacao", label: "IG Feed 1:1 (1080×1080)" },
   { id: "ig-story", label: "IG Story (1080×1920)" },
-  { id: "yt-banner", label: "YouTube Banner (2560×1440)" },
   { id: "fb-perfil", label: "Avatar Circular (720×720)" },
-  { id: "li-capa-empresa", label: "LinkedIn Página (1128×191)" },
 ];
 
 const STATIONERY_GROUPS = [
@@ -259,9 +262,6 @@ export function KitStudioWizard() {
   const [estiloVisual, setEstiloVisual] = useState<"moderno" | "classico">("moderno");
   const [activePropostaRedeId, setActivePropostaRedeId] =
     useState<RedeSocialId>("fb-capa");
-  const [propostaViewport, setPropostaViewport] = useState<"desktop" | "mobile">(
-    "desktop"
-  );
   const [showSafeZonesOnPropostas, setShowSafeZonesOnPropostas] = useState(true);
   const [propostasPecas, setPropostasPecas] = useState<PecaPropostaPreview[]>([]);
   const [propostasAvisoTextos, setPropostasAvisoTextos] = useState<string>(
@@ -281,9 +281,6 @@ export function KitStudioWizard() {
   const [subFilterRedes, setSubFilterRedes] = useState<
     "todas" | "perfis" | "capas-posts"
   >("todas");
-  const [previewViewport, setPreviewViewport] = useState<"desktop" | "mobile">(
-    "desktop"
-  );
   const [showSafeZonesOnPreview, setShowSafeZonesOnPreview] = useState(true);
   const [regeneratingRedeId, setRegeneratingRedeId] = useState<RedeSocialId | null>(null);
   const [cacheBusters, setCacheBusters] = useState<Record<string, number>>({});
@@ -2607,44 +2604,26 @@ export function KitStudioWizard() {
                     Imagem de referência obrigatória ativa • {dados.nome}
                   </p>
                   <p className="text-stone-600">
-                    Motor: <strong>{imagemConfig.modelo}</strong> • Proporção nativa atual:{" "}
+                    Motor: <strong>{imagemConfig.modelo}</strong> • Proporção nativa:{" "}
                     <strong>{activePropostaRede.aspectRatioGemini}</strong> →{" "}
                     <strong>{activePropostaRede.medidaLabel}</strong>
+                  </p>
+                  <p className="mt-0.5 text-amber-900 font-medium">
+                    Composição: <strong>{activePropostaRede.composicao.disposicaoRotulo}</strong>{" "}
+                    — {activePropostaRede.composicao.camadas.informacao}
                   </p>
                 </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 text-xs">
-                <div className="inline-flex rounded-xl border border-stone-300 bg-[#FAF7F2] p-0.5">
-                  <button
-                    type="button"
-                    id="btn-proposta-desktop"
-                    aria-pressed={propostaViewport === "desktop"}
-                    onClick={() => setPropostaViewport("desktop")}
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-bold transition ${
-                      propostaViewport === "desktop"
-                        ? "bg-stone-900 text-amber-300"
-                        : "text-stone-700 hover:text-stone-950"
-                    }`}
-                  >
-                    <Monitor className="h-3.5 w-3.5" />
-                    <span>Computador</span>
-                  </button>
-                  <button
-                    type="button"
-                    id="btn-proposta-mobile"
-                    aria-pressed={propostaViewport === "mobile"}
-                    onClick={() => setPropostaViewport("mobile")}
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-bold transition ${
-                      propostaViewport === "mobile"
-                        ? "bg-stone-900 text-amber-300"
-                        : "text-stone-700 hover:text-stone-950"
-                    }`}
-                  >
-                    <Smartphone className="h-3.5 w-3.5" />
-                    <span>Telemóvel</span>
-                  </button>
-                </div>
+                <span
+                  id="badge-proposta-vista-dupla"
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-stone-300 bg-[#FAF7F2] px-3 py-2 font-bold text-stone-900"
+                >
+                  <Monitor className="h-3.5 w-3.5 text-stone-700" />
+                  <Smartphone className="h-3.5 w-3.5 text-amber-800" />
+                  <span>Computador + Telemóvel lado a lado</span>
+                </span>
 
                 <button
                   type="button"
@@ -2711,18 +2690,22 @@ export function KitStudioWizard() {
               </div>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {(propostasPecas[0]?.textosPedidos?.length || 0) > 0 ? (
-                propostasPecas[0].textosPedidos.map((txt, i) => (
-                  <span
-                    key={i}
-                    className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 font-semibold text-stone-900"
-                  >
-                    «{txt}»
-                  </span>
-                ))
+              {(propostasPecas.find((p) => p.redeId === activePropostaRedeId)?.textosPedidos?.length || 0) > 0 ? (
+                propostasPecas
+                  .find((p) => p.redeId === activePropostaRedeId)!
+                  .textosPedidos.map((txt, i) => (
+                    <span
+                      key={i}
+                      className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 font-semibold text-stone-900"
+                    >
+                      «{txt}»
+                    </span>
+                  ))
               ) : (
                 <span className="rounded-lg border border-amber-200 bg-white px-2.5 py-1 font-semibold text-stone-700">
-                  Apenas emblema (sem texto extra)
+                  {propostasLoading
+                    ? "A atualizar textos para este formato…"
+                    : "Apenas emblema (sem texto extra)"}
                 </span>
               )}
             </div>
@@ -2742,7 +2725,23 @@ export function KitStudioWizard() {
 
           {/* Grelha Lado a Lado: Moderna vs Clássica */}
           <div className="grid gap-6 lg:grid-cols-2">
-            {propostasPecas.map((prop) => {
+            {propostasPecas.filter((p) => p.redeId === activePropostaRedeId).length === 0 && (
+              <>
+                {["Moderna em camadas", "Clássica"].map((lbl) => (
+                  <div
+                    key={lbl}
+                    className="rounded-3xl border-2 border-stone-200 bg-white p-6 space-y-4 animate-pulse"
+                  >
+                    <div className="h-5 w-44 rounded bg-stone-200" />
+                    <div className="h-48 rounded-2xl border border-stone-200 bg-[#FAF7F2]" />
+                    <div className="h-4 w-2/3 rounded bg-stone-200" />
+                  </div>
+                ))}
+              </>
+            )}
+            {propostasPecas
+              .filter((p) => p.redeId === activePropostaRedeId)
+              .map((prop) => {
               const isSelected = estiloVisual === prop.estiloVisual;
               const isRegenThis = regeneratingEstilo === prop.estiloVisual;
 
@@ -2750,6 +2749,7 @@ export function KitStudioWizard() {
                 <article
                   key={prop.id}
                   id={`card-proposta-visual-${prop.estiloVisual}`}
+                  data-proposta-rede={prop.redeId}
                   className={`flex flex-col justify-between rounded-3xl border-2 p-5 sm:p-6 transition space-y-4 ${
                     isSelected
                       ? "border-stone-950 bg-white ring-2 ring-stone-900/15 shadow-sm"
@@ -2783,13 +2783,12 @@ export function KitStudioWizard() {
                     </div>
 
                     <div className="rounded-2xl border border-stone-200 bg-[#FAF7F2] p-3">
-                      <SafeZoneSocialFrame
+                      <SafeZoneDualPreview
                         rede={activePropostaRede}
                         imageUrl={prop.previewDataUrl}
                         alt={`${prop.tituloProposta} — ${activePropostaRede.nome}`}
-                        viewport={propostaViewport}
                         showSafeZones={showSafeZonesOnPropostas}
-                        maxHeightPx={240}
+                        maxHeightPx={205}
                       />
                     </div>
 
@@ -2809,6 +2808,9 @@ export function KitStudioWizard() {
                           : "Sem referência"}
                       </span>
                       <span className="rounded-md bg-stone-100 px-2 py-0.5 font-semibold text-stone-800">
+                        {activePropostaRede.composicao.disposicaoRotulo}
+                      </span>
+                      <span className="rounded-md bg-stone-100 px-2 py-0.5 font-semibold text-stone-800">
                         Gemini {prop.aspectRatioGemini} → {prop.width}×{prop.height} px
                       </span>
                       <span
@@ -2820,7 +2822,7 @@ export function KitStudioWizard() {
                       >
                         {prop.audit.precisaRegeneracao
                           ? "Fora da zona segura — Regenerar"
-                          : "Zonas seguras validadas ✓"}
+                          : "Zona móvel + avatar ✓"}
                       </span>
                     </div>
 
@@ -2961,46 +2963,24 @@ export function KitStudioWizard() {
             </div>
           </div>
 
-          {/* Aviso global + Controlos de vista Computador/Telemóvel e Zonas Seguras */}
+          {/* Aviso global + Indicação de vista dupla Computador + Telemóvel lado a lado */}
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-stone-200 bg-white px-5 py-4">
             <div className="flex items-start gap-2.5 text-xs text-amber-950">
               <AlertCircle className="h-4 w-4 text-amber-800 shrink-0 mt-0.5" />
               <p>
-                <strong>Verifique os textos</strong> e as zonas seguras abaixo em vista Computador e Telemóvel. Se precisar de nova versão numa rede específica, clique em <strong>«Regenerar»</strong> na respetiva peça.
+                <strong>Verifique os textos</strong> e as zonas seguras abaixo com Computador e Telemóvel <strong>lado a lado</strong>. Se precisar de nova versão numa rede específica, clique em <strong>«Regenerar»</strong> na respetiva peça.
               </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 text-xs">
-              <div className="inline-flex rounded-xl border border-stone-300 bg-[#FAF7F2] p-0.5">
-                <button
-                  type="button"
-                  id="btn-viewport-desktop"
-                  aria-pressed={previewViewport === "desktop"}
-                  onClick={() => setPreviewViewport("desktop")}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-bold transition ${
-                    previewViewport === "desktop"
-                      ? "bg-stone-900 text-amber-300"
-                      : "text-stone-700 hover:text-stone-950"
-                  }`}
-                >
-                  <Monitor className="h-3.5 w-3.5" />
-                  <span>Computador</span>
-                </button>
-                <button
-                  type="button"
-                  id="btn-viewport-mobile"
-                  aria-pressed={previewViewport === "mobile"}
-                  onClick={() => setPreviewViewport("mobile")}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-bold transition ${
-                    previewViewport === "mobile"
-                      ? "bg-stone-900 text-amber-300"
-                      : "text-stone-700 hover:text-stone-950"
-                  }`}
-                >
-                  <Smartphone className="h-3.5 w-3.5" />
-                  <span>Telemóvel</span>
-                </button>
-              </div>
+              <span
+                id="badge-preview-vista-dupla"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-stone-300 bg-[#FAF7F2] px-3 py-2 font-bold text-stone-900"
+              >
+                <Monitor className="h-3.5 w-3.5 text-stone-700" />
+                <Smartphone className="h-3.5 w-3.5 text-amber-800" />
+                <span>Computador + Telemóvel lado a lado</span>
+              </span>
 
               <button
                 type="button"
@@ -3081,7 +3061,13 @@ export function KitStudioWizard() {
             )}
           </div>
 
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          <div
+            className={`grid gap-5 ${
+              activeResultCategory === "redes"
+                ? "md:grid-cols-2"
+                : "sm:grid-cols-2 lg:grid-cols-3"
+            }`}
+          >
             {FORMAT_SPECS.filter((s) => {
               if (
                 activeResultCategory !== "todas" &&
@@ -3119,7 +3105,9 @@ export function KitStudioWizard() {
                   <div
                     key={spec.id}
                     id={`card-kit-peca-${spec.id}`}
-                    className="flex flex-col justify-between rounded-2xl border border-stone-200 bg-white p-4 shadow-2xs space-y-3"
+                    className={`flex flex-col justify-between rounded-2xl border border-stone-200 bg-white p-4 shadow-2xs space-y-3 ${
+                      activeResultCategory === "todas" ? "lg:col-span-1" : ""
+                    }`}
                   >
                     <div className="space-y-2.5">
                       <div className="flex items-start justify-between gap-2">
@@ -3137,13 +3125,14 @@ export function KitStudioWizard() {
                       </div>
 
                       <div className="rounded-xl border border-stone-200 bg-[#FAF7F2] p-2.5">
-                        <SafeZoneSocialFrame
+                        <SafeZoneDualPreview
                           rede={rede}
                           imageUrl={fileUrl}
                           alt={spec.nome}
-                          viewport={previewViewport}
                           showSafeZones={showSafeZonesOnPreview}
-                          maxHeightPx={176}
+                          maxHeightPx={
+                            activeResultCategory === "redes" ? 190 : 152
+                          }
                         />
                       </div>
 
@@ -3158,6 +3147,9 @@ export function KitStudioWizard() {
 
                       <div className="flex flex-wrap gap-1 text-[10px]">
                         <span className="rounded bg-stone-100 px-2 py-0.5 font-semibold text-stone-800">
+                          {rede.composicao.disposicaoRotulo}
+                        </span>
+                        <span className="rounded bg-stone-100 px-2 py-0.5 font-semibold text-stone-800">
                           Gemini {rede.aspectRatioGemini}
                         </span>
                         <span
@@ -3169,7 +3161,7 @@ export function KitStudioWizard() {
                         >
                           {audit?.precisaRegeneracao
                             ? "Rever zona segura"
-                            : "Zona segura ✓"}
+                            : "Zona móvel + avatar ✓"}
                         </span>
                       </div>
 

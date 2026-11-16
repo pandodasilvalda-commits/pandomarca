@@ -8,6 +8,9 @@ Use a IMAGEM DO LOGÓTIPO EM ANEXO (logotipoReferencia) como referência visual 
 Tom da marca: **{{tom}}** — {{tomDescricao}}.
 Prolongar exatamente o mesmo emblema, tipografia, formas (**{{formasDoLogotipo}}**) e linguagem plástica (**{{estiloDoLogotipo}}**) na paleta exata **{{paleta}}**.
 Direção desta proposta (**{{layoutNome}}**): {{layoutDirecaoVisual}}.
-ZONA SEGURA OBRIGATÓRIA (computador e telemóvel): {{zonaSegura}}. Manter as margens exteriores, cortes laterais de telemóvel e áreas de foto de perfil livres de texto ou elementos críticos.
-Textos exatos fornecidos pelo cliente a apresentar com grafia portuguesa correta (NUNCA inventar telefones, moradas nem slogans não listados):
+Disposição escolhida para esta proporção (**{{disposicaoLayout}}**): {{regraComposicao}}
+CAMADAS E ZONA SEGURA (computador e telemóvel):
+- Camada de fundo / ambiente / padrões: PODE sangrar até às margens exteriores do formato completo de computador para evitar barras vazias.
+- Camada de informação (logótipo, nome, slogan e contactos) vs camada UI/perfil: {{zonaSegura}}. Logótipo e texto NUNCA saem da zona segura móvel nem ficam debaixo da foto de perfil ou botões da plataforma.
+Textos exatos fornecidos pelo cliente a apresentar segundo a hierarquia (1.º logótipo, 2.º nome, 3.º slogan, 4.º contactos; NUNCA inventar dados não listados):
 {{textosPedidos}}
