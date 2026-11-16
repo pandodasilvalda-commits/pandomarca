@@ -8,7 +8,6 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
-  Coins,
   Download,
   Eye,
   FileArchive,
@@ -106,7 +105,7 @@ const DEFAULT_IMAGEM_CONFIG: PublicImagemConfig = {
   maxRondas: 3,
   maxAjustes: 3,
   semCustosReais: true,
-  etiquetaModo: "Modo de demonstração sem custos (amostras locais)",
+  etiquetaModo: "Modo de demonstração",
 };
 
 const SAMPLE_BAKERY_PHOTO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
@@ -135,10 +134,6 @@ function svgToDataUrl(svg: string): string {
 
 function makeSessaoId(): string {
   return `pm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-}
-
-function formatEur(v: number): string {
-  return `${v.toFixed(2).replace(".", ",")} €`;
 }
 
 function persistSnapshotSafely(snapshot: StudioSessionSnapshot): void {
@@ -728,7 +723,7 @@ export function KitStudioWizard() {
   }) {
     clearError();
     setBusyDetail(
-      "A vetorizar localmente com vtracer e potrace, reduzir para ≤ 8 cores e verificar legibilidade a 32 px…"
+      "A converter o logótipo em vetor limpo (≤ 8 cores) e verificar legibilidade a 32 px…"
     );
     if (opts.suggestedPaleta) {
       setCustomPalette(opts.suggestedPaleta);
@@ -794,7 +789,7 @@ export function KitStudioWizard() {
       setStep("vetor");
     } catch {
       setFailure(
-        "Erro de comunicação durante a vetorização local gratuita.",
+        "Erro de comunicação durante a vetorização do logótipo.",
         () => executeLocalVectorize(opts)
       );
     } finally {
@@ -1270,8 +1265,8 @@ export function KitStudioWizard() {
               <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
               <span>
                 {entitlement.kind === "website_bonus"
-                  ? "Oferta Website PandoWeb (website_bonus)"
-                  : "Kit Individual (standalone)"}
+                  ? "Oferta Website PandoWeb"
+                  : "Produto Individual • Preço a definir"}
               </span>
             </span>
 
@@ -1443,13 +1438,13 @@ export function KitStudioWizard() {
             </div>
           ) : (
             <>
-              <div className="rounded-2xl border border-stone-200 bg-[#FAF7F2] p-4 text-xs text-stone-700 leading-relaxed space-y-1">
+              <div className="rounded-2xl border border-stone-200 bg-[#FAF7F2] p-4 text-xs text-stone-700 leading-relaxed flex flex-wrap items-center justify-between gap-2">
                 <p>
-                  Aceita códigos <strong>Oferta Website PandoWeb</strong> (<code>website_bonus</code>) ou <strong>Kit Individual</strong> (<code>standalone</code>). Ambos produzem exatamente o mesmo kit de 36 ficheiros.
+                  Aceita códigos <strong>Oferta Website PandoWeb</strong> ou <strong>Produto Individual</strong> (preço a definir). Ambos produzem exatamente o mesmo kit de 36 ficheiros.
                 </p>
-                <p className="font-semibold text-stone-900">
-                  Estado de imagem ativo: {imagemConfig.etiquetaModo}.
-                </p>
+                <span className="inline-flex items-center rounded-full border border-stone-200 bg-white px-2.5 py-0.5 text-[11px] font-semibold text-stone-600 shrink-0">
+                  {imagemConfig.etiquetaModo}
+                </span>
               </div>
 
               <form onSubmit={handleAccessSubmit} className="space-y-4">
@@ -1498,7 +1493,7 @@ export function KitStudioWizard() {
 
               <div className="border-t border-stone-200 pt-5 space-y-2.5">
                 <p className="text-xs font-semibold text-stone-600">
-                  Atalhos locais de teste:
+                  Atalhos de demonstração:
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -1521,7 +1516,7 @@ export function KitStudioWizard() {
                     }}
                     className="rounded-lg border border-stone-300 bg-stone-50 px-3 py-1.5 text-xs font-semibold text-stone-800 hover:bg-stone-200/70"
                   >
-                    Kit Individual (kit-individual-demo)
+                    Produto Individual (kit-individual-demo)
                   </button>
                 </div>
               </div>
@@ -1591,7 +1586,7 @@ export function KitStudioWizard() {
                   Entrada A — Criar logótipo de raiz
                 </span>
                 <span className="text-base font-bold text-stone-950">
-                  Comparar 2 propostas distintas e vetorizar gratuitamente
+                  Comparar 2 propostas distintas e afinar o desenho
                 </span>
                 <span className="text-xs text-stone-600 leading-relaxed">
                   Gera 2 propostas diferentes por ronda (clássica com símbolo vs moderna tipográfica), permite ajustar e vetoriza em SVG limpo até 8 cores.
@@ -1810,7 +1805,7 @@ export function KitStudioWizard() {
                     Direção criativa e referências (Entrada A)
                   </h2>
                   <p className="text-xs text-stone-600">
-                    Os prompts garantem logótipo limpo apenas com o nome da marca ou símbolo puro (nunca slogans nem fundos cheios de texto).
+                    O estúdio cria um logótipo limpo apenas com o nome da marca ou símbolo puro (nunca slogans nem fundos cheios de texto).
                   </p>
                 </div>
               </div>
@@ -1983,7 +1978,7 @@ export function KitStudioWizard() {
               <p className="text-sm text-stone-600">
                 {entradaEscolhida === "A"
                   ? "Compare uma proposta clássica com símbolo contra uma moderna tipográfica. Pode escolher já para vetorizar, pedir ajuste ou pedir outra ronda."
-                  : "Carregue PNG, JPG ou SVG até 8 MB. Pode vetorizar e confirmar o vetor gratuitamente ou avançar diretamente."}
+                  : "Carregue PNG, JPG ou SVG até 8 MB. Pode vetorizar e confirmar o desenho vetorial ou avançar diretamente."}
               </p>
             </div>
 
@@ -2025,14 +2020,14 @@ export function KitStudioWizard() {
                     className="inline-flex items-center gap-1.5 rounded-xl border border-stone-300 bg-white px-3.5 py-2.5 text-xs font-semibold text-stone-700 hover:bg-stone-100"
                   >
                     <SlidersHorizontal className="h-3.5 w-3.5" />
-                    <span>Usar reserva SVG</span>
+                    <span>Compositor vetorial clássico</span>
                   </button>
                 </>
               )}
             </div>
           </div>
 
-          {/* Contadores visíveis de rondas, ajustes e orçamento por kit */}
+          {/* Contadores visíveis de rondas e ajustes */}
           {entradaEscolhida === "A" && !usarReservaSvg && (
             <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-stone-200 bg-white px-5 py-3.5 text-xs">
               <span className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-3 py-1 font-bold text-amber-300">
@@ -2041,17 +2036,9 @@ export function KitStudioWizard() {
               <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-100 px-3 py-1 font-bold text-amber-950">
                 Ajustes: {ajustesUsados} / {imagemConfig.maxAjustes}
               </span>
-              <span className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-[#FAF7F2] px-3 py-1 font-semibold text-stone-800">
-                <Coins className="h-3.5 w-3.5 text-amber-800" />
-                <span>
-                  Registo previsto:{" "}
-                  {formatEur(orcamento?.gastoEur || 0)} /{" "}
-                  {formatEur(orcamento?.limiteEur ?? imagemConfig.limitePorKitEur)}
-                </span>
-              </span>
               {imagemConfig.semCustosReais && (
-                <span className="text-emerald-800 font-semibold">
-                  • 0,00 € reais cobrados (amostras em tests/fixtures)
+                <span className="inline-flex items-center rounded-full border border-stone-200 bg-[#FAF7F2] px-2.5 py-0.5 font-semibold text-stone-600">
+                  {imagemConfig.etiquetaModo}
                 </span>
               )}
             </div>
@@ -2106,7 +2093,7 @@ export function KitStudioWizard() {
                               </h2>
                             </div>
                             <span className="rounded-md border border-stone-200 bg-[#FAF7F2] px-2.5 py-1 text-[11px] font-semibold text-stone-600">
-                              {prop.fixtureNome || prop.origem}
+                              Ronda {prop.ronda}
                             </span>
                           </div>
 
@@ -2231,18 +2218,18 @@ export function KitStudioWizard() {
             </>
           )}
 
-          {/* MODO RESERVA SVG (se acionado manualmente) */}
+          {/* COMPOSITOR VETORIAL ALTERNATIVO (se acionado manualmente) */}
           {entradaEscolhida === "A" && usarReservaSvg && (
             <div className="rounded-3xl border border-stone-200 bg-white p-6 space-y-6">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 pb-4">
                 <div>
                   <span className="text-xs font-bold uppercase tracking-wider text-amber-800">
-                    Gerador SVG por regras (reserva sem custos externos)
+                    Compositor vetorial alternativo
                   </span>
                   <h2 className="text-xl font-bold text-stone-950">
                     {refinamentoOpcoes
                       ? `2 Versões afinadas (Ronda ${refinamentoRound}/3)`
-                      : "2 Direções vetoriais de reserva"}
+                      : "2 Direções vetoriais"}
                   </h2>
                 </div>
                 <button
@@ -2404,7 +2391,7 @@ export function KitStudioWizard() {
                         className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-stone-900 px-4 py-3 text-xs font-bold text-stone-50 hover:bg-stone-800"
                       >
                         <Wand2 className="h-4 w-4 text-amber-300" />
-                        <span>Vetorizar e Confirmar Vetor (0,00 €)</span>
+                        <span>Vetorizar e Confirmar Vetor</span>
                       </button>
                       <button
                         type="button"
@@ -2436,7 +2423,7 @@ export function KitStudioWizard() {
           <div className="flex flex-wrap items-start justify-between gap-4 border-b border-stone-200 pb-6">
             <div>
               <p className="text-xs font-bold uppercase tracking-widest text-amber-800">
-                Passo 4 de 8 • Vetorização Local Gratuita (vtracer + potrace)
+                Passo 4 de 8 • Confirmação Vetorial
               </p>
               <h1 className="mt-1 text-2xl font-bold text-stone-950 sm:text-3xl">
                 Confirmar vetor
@@ -2477,7 +2464,7 @@ export function KitStudioWizard() {
               Paleta reduzida: {vetorState.colorsCount} / 8 cores
             </span>
             <span className="rounded-full border border-stone-200 bg-[#FAF7F2] px-3 py-1 font-semibold text-stone-800">
-              Motor: {vetorState.engine} (0,00 € locais)
+              Formato: SVG vetorial limpo
             </span>
             {vetorState.backgroundRemoved && (
               <span className="rounded-full bg-emerald-100 px-3 py-1 font-semibold text-emerald-950">
@@ -3067,7 +3054,7 @@ export function KitStudioWizard() {
                 <p className="text-stone-600">
                   {photoFilename
                     ? `Fotografia carregada: ${photoFilename}`
-                    : "Em modo de teste sem foto carregada usa automaticamente a imagem de amostra da padaria."}
+                    : "Sem foto carregada, utiliza a fotografia de demonstração da padaria."}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -3391,7 +3378,13 @@ export function KitStudioWizard() {
                 Marca & Acesso
               </span>
               <p className="mt-1 font-bold text-stone-950">
-                {generatedKit.dados.nome} ({entitlement?.kind || "validado"})
+                {generatedKit.dados.nome} (
+                {entitlement?.kind === "website_bonus"
+                  ? "Oferta Website PandoWeb"
+                  : entitlement?.kind === "standalone"
+                  ? "Produto Individual • Preço a definir"
+                  : "Validado"}
+                )
               </p>
             </div>
             <div>

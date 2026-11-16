@@ -10,8 +10,8 @@ Toda a interface, documentação e ficheiros gerados estão em **português euro
 
 O PandoMarca distingue dois direitos de acesso de igual peso funcional:
 
-1. **Oferta do website (`website_bonus`)**: atribuído como bónus a clientes que subscrevem um website PandoWeb. A criação do website é 0 € e a subscrição publicada em `pandoweb.pt` é de **160 € + IVA por ano** (alojamento, domínio, email, SSL e backups — este valor refere-se à subscrição do website, não ao preço do kit).
-2. **Produto individual (`standalone`)**: destinado a clientes que adquiram ou subscrevam o PandoMarca de forma independente com código próprio. O preço e o meio de pagamento do kit individual ainda estão em aberto, pelo que nesta versão não há checkout, não se apresenta preço para o kit e não se efectua qualquer cobrança.
+1. **Oferta do website (`website_bonus`)**: atribuído como bónus a clientes que subscrevem um website em `pandoweb.pt`, desbloqueado com código gerado pela PandoWeb.
+2. **Produto individual (`standalone`)**: acesso autónomo ao kit sem subscrição de website, através de código próprio (**Preço a definir**). O meio de pagamento do kit individual ainda está em aberto, pelo que nesta versão não há checkout nem cobrança.
 
 ---
 
@@ -49,7 +49,7 @@ O PandoMarca distingue dois direitos de acesso de igual peso funcional:
 3. Variáveis de ambiente documentadas:
    - `KIT_ACCESS_CODE_WEBSITE`: código de acesso da oferta do website (`website_bonus`).
    - `KIT_ACCESS_CODE_STANDALONE`: código de acesso do kit individual (`standalone`).
-   - `KIT_GATE_SECRET`: segredo HMAC-SHA256 para assinar cookies `HttpOnly`.
+   - `KIT_GATE_SECRET`: segredo HMAC-SHA256 para assinar cookies `HttpOnly` válidos por 12 horas.
    - `IMAGEM_MODO`: `falso` (por omissão, sem custos; usa amostras locais em `tests/fixtures/`) ou `real`.
    - `IMAGEM_FORNECEDOR`: fornecedor futuro (`gemini` ou `recraft`).
    - `IMAGEM_MODELO`: identificador do modelo quando `IMAGEM_MODO=real`.
@@ -98,7 +98,11 @@ O botão **Preencher ensaio: Forno da Vilariça** no assistente passo a passo pr
 
 ---
 
-## 5. Documentação Técnica e Decisões em Aberto
+## 5. O que ainda falta antes de abrir em produção
 
-Consulte [`docs/SPEC.md`](docs/SPEC.md) para a especificação dos 36 ficheiros com ligações oficiais (data de referência: 15 de novembro de 2026) e decisões futuras (pagamentos Stripe, contas, revisão humana PandoWeb e domínio final).
+- **Ligação paga de geração de imagem desativada**: a camada unificada em `lib/imagem/` (`gemini.ts` e `recraft.ts`) encontra-se estruturada para ativação futura, mantendo por agora `IMAGEM_MODO=falso` com amostras locais em `tests/fixtures/`, sem chaves nem chamadas externas pagas.
+- **Sem pagamentos nem checkout**: o acesso `standalone` tem **preço a definir**; não existe integração Stripe (cartão, MB Way ou Multibanco) nem fluxo de cobrança nesta versão.
+- **Sem contas de utilizador nem base de dados**: a entrada é feita por validação de códigos de ambiente (`website_bonus` e `standalone`) com cookie `HttpOnly` assinado válido por 12 horas, e os rascunhos/kits são guardados temporariamente em disco local (`/tmp`).
+- **Revisão humana PandoWeb e publicação ativa em aberto**: falta definir o domínio final (por exemplo `marca.pandoweb.pt`), políticas de emissão de códigos por cliente, revisão humana opcional pela equipa PandoWeb e chaves de produção.
+- **Especificação técnica detalhada**: consulte [`docs/SPEC.md`](docs/SPEC.md) para a lista oficial dos 36 formatos com fontes documentadas (data de referência: 15 de novembro de 2026).
 

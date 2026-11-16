@@ -2,7 +2,6 @@ import Link from "next/link";
 import {
   ArrowRight,
   CheckCircle2,
-  Compass,
   FileArchive,
   PenTool,
   ShieldCheck,
@@ -17,9 +16,14 @@ export default function HomePage() {
       <section className="rounded-3xl border border-stone-200/90 bg-white p-8 shadow-xs sm:p-12 lg:p-16">
         <div className="grid gap-12 lg:grid-cols-12 lg:items-center">
           <div className="lg:col-span-7 space-y-6">
-            <p className="text-xs font-bold uppercase tracking-widest text-amber-800">
-              PandoWeb • Estúdio de Identidade para PME
-            </p>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <p className="text-xs font-bold uppercase tracking-widest text-amber-800">
+                PandoWeb • Estúdio de Identidade para PME
+              </p>
+              <span className="inline-flex items-center rounded-full border border-stone-200 bg-[#FAF7F2] px-2.5 py-0.5 text-[11px] font-semibold text-stone-600">
+                Modo de demonstração
+              </span>
+            </div>
             <h1 className="text-4xl font-bold tracking-tight text-stone-950 sm:text-5xl lg:text-[3.35rem] leading-[1.08]">
               Do logótipo ao kit completo de marca em 36 ficheiros exactos.
             </h1>
@@ -61,7 +65,7 @@ export default function HomePage() {
               <div className="flex items-center justify-between border-b border-stone-200 pb-4">
                 <div>
                   <span className="text-xs font-bold uppercase tracking-wider text-stone-500">
-                    Entrega determinística
+                    Entrega completa
                   </span>
                   <h2 className="mt-0.5 text-xl font-bold text-stone-900">
                     pandomarca-&#123;marca&#125;.zip
@@ -167,7 +171,7 @@ export default function HomePage() {
               Partir de um ficheiro PNG, JPG ou SVG (até 8 MB)
             </h2>
             <p className="text-sm text-stone-600 leading-relaxed">
-              O servidor analisa a transparência, remove automaticamente fundos de cor lisa ligados à margem (mantendo o branco fechado no interior do desenho), extrai a paleta dos píxeis opacos, verifica a nitidez e gera todas as variantes e os 36 formatos. Inclui o ensaio <strong>Forno da Vilariça</strong> pronto a testar.
+              Analisamos a transparência, removemos automaticamente fundos de cor lisa ligados à margem (mantendo o branco fechado no interior do desenho), extraímos a paleta, verificamos a nitidez e geramos todas as variantes e os 36 formatos. Inclui o ensaio <strong>Forno da Vilariça</strong> pronto a testar.
             </p>
           </div>
           <div className="mt-6 pt-4 border-t border-stone-100">
@@ -186,13 +190,13 @@ export default function HomePage() {
       <section className="mt-14 space-y-6">
         <div className="max-w-3xl space-y-2">
           <p className="text-xs font-bold uppercase tracking-widest text-amber-800">
-            Direitos de Acesso
+            Formas de Acesso
           </p>
           <h2 className="text-3xl font-bold text-stone-900">
             Duas formas de acesso, o mesmo kit completo
           </h2>
           <p className="text-base text-stone-600">
-            O PandoMarca distingue no código dois direitos de acesso de igual peso funcional (<code>website_bonus</code> e <code>standalone</code>). Ambos entregam exactamente o mesmo arquivo ZIP de 36 ficheiros.
+            O PandoMarca disponibiliza duas modalidades de acesso com as mesmas funcionalidades. Ambas entregam exactamente o mesmo arquivo ZIP de 36 ficheiros.
           </p>
         </div>
 
@@ -200,12 +204,12 @@ export default function HomePage() {
           <div className="rounded-2xl border border-stone-200 bg-white p-7 space-y-4">
             <div className="flex items-center justify-between">
               <span className="rounded-lg bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-900">
-                Oferta do Website (website_bonus)
+                Oferta do Website
               </span>
               <ShieldCheck className="h-5 w-5 text-emerald-700" />
             </div>
             <h3 className="text-xl font-bold text-stone-900">
-              Incluído como bónus na subscrição de website PandoWeb
+              Incluído como bónus no website PandoWeb
             </h3>
             <p className="text-sm text-stone-600 leading-relaxed">
               O cliente que subscreve um website em{" "}
@@ -217,14 +221,14 @@ export default function HomePage() {
               >
                 pandoweb.pt
               </a>{" "}
-              recebe o PandoMarca como bónus, desbloqueado com um código de acesso gerado pela PandoWeb. Na PandoWeb, a criação do site é <strong>0 €</strong> e a subscrição anual publicada é de <strong>160 € + IVA por ano</strong> (inclui alojamento, domínio, email, SSL e backups — este valor é o da subscrição do website, não o preço do kit).
+              recebe o PandoMarca como bónus, desbloqueado com um código de acesso gerado pela PandoWeb.
             </p>
           </div>
 
           <div className="rounded-2xl border border-stone-200 bg-white p-7 space-y-4">
             <div className="flex items-center justify-between">
               <span className="rounded-lg bg-amber-100 px-3 py-1 text-xs font-bold text-amber-950">
-                Produto Individual (standalone)
+                Produto Individual
               </span>
               <Sparkles className="h-5 w-5 text-amber-800" />
             </div>
@@ -232,41 +236,44 @@ export default function HomePage() {
               Acesso autónomo ao kit sem subscrição de website
             </h3>
             <p className="text-sm text-stone-600 leading-relaxed">
-              Outras empresas ou profissionais podem aceder ao PandoMarca à parte, através de um código próprio de tipo <code>standalone</code>. O preço e o meio de pagamento do kit individual ainda estão em aberto, pelo que nesta versão não há checkout, não se apresenta preço para o kit e não se efectua qualquer cobrança.
+              Outras empresas ou profissionais podem aceder ao PandoMarca à parte, através de um código de acesso próprio.
+            </p>
+            <p className="inline-flex items-center rounded-lg border border-amber-200/90 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-950">
+              Preço a definir
             </p>
           </div>
         </div>
       </section>
 
-      {/* Transparência: O que existe agora vs. o que ainda não existe */}
-      <section className="mt-14 rounded-2xl border border-stone-200 bg-[#F3EFE6] p-8 sm:p-10">
-        <div className="grid gap-8 lg:grid-cols-2">
-          <div className="space-y-4">
-            <h3 className="text-xl font-bold text-stone-900 flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-emerald-700" />
-              <span>O que está incluído e funcional nesta versão</span>
-            </h3>
-            <ul className="space-y-2.5 text-sm text-stone-700">
-              <li>• Validação de código por ambiente (<code>website_bonus</code> e <code>standalone</code>) com cookie HttpOnly assinado válido por 12 horas.</li>
-              <li>• <strong>Entrada A</strong>: 2 propostas distintas (clássica vs moderna) com contador de rondas, ajustes e camada trocável (sem custos em modo de teste) + reserva SVG.</li>
-              <li>• <strong>Vetorização local gratuita e Entrada B</strong>: SVG limpo (&le; 8 cores, &lt; 200 KB) por <code>vtracer</code> e <code>potrace</code>, confirmação com pré-visualização a 32 px e remoção automática de fundo.</li>
-              <li>• <strong>Capas em 7 camadas</strong>: sempre 1 layout Moderno e 1 Clássico com contraste WCAG AA, zonas seguras por plataforma e dados reais do cliente.</li>
-              <li>• Pré-visualização completa no browser (desktop e telemóvel), guarda de sessão e descarregamento do ZIP com 36 ficheiros verificados.</li>
-            </ul>
-          </div>
-
-          <div className="space-y-4">
-            <h3 className="text-xl font-bold text-stone-900 flex items-center gap-2">
-              <Compass className="h-5 w-5 text-amber-800" />
-              <span>O que ainda falta antes de abrir em produção</span>
-            </h3>
-            <ul className="space-y-2.5 text-sm text-stone-700">
-              <li>• <strong>Ligação paga desativada nesta versão</strong>: camada pronta em <code>lib/imagem/</code> para Gemini/Recraft, mantendo <code>IMAGEM_MODO=falso</code> sem chaves nem chamadas externas.</li>
-              <li>• <strong>Sem pagamentos nem checkout</strong>: não há integração Stripe (cartão, MB Way ou Multibanco) nem cobrança nesta fase.</li>
-              <li>• <strong>Sem contas de utilizador nem base de dados</strong>: o acesso é feito apenas por código e os rascunhos/kits são guardados temporariamente em disco local.</li>
-              <li>• <strong>Sem publicação ativa</strong>: build preparado para deploy e uso online, aguardando definição de domínio e chaves finais.</li>
-            </ul>
-          </div>
+      {/* O que está incluído no estúdio */}
+      <section className="mt-14 rounded-2xl border border-stone-200 bg-[#F3EFE6] p-8 sm:p-10 space-y-5">
+        <h3 className="text-xl font-bold text-stone-900 flex items-center gap-2">
+          <CheckCircle2 className="h-5 w-5 text-emerald-700" />
+          <span>O que está incluído no PandoMarca</span>
+        </h3>
+        <div className="grid gap-6 md:grid-cols-2 text-sm text-stone-700">
+          <ul className="space-y-2.5">
+            <li>
+              • <strong>Entrada A</strong>: duas propostas claramente distintas (clássica com símbolo vs moderna tipográfica), rondas de afinamento e confirmação vetorial com leitura a 32 px.
+            </li>
+            <li>
+              • <strong>Entrada B</strong>: carregue o logótipo existente com limpeza automática de fundo liso ligado à margem, extração da paleta e preparação vetorial.
+            </li>
+            <li>
+              • <strong>Variantes e identidade</strong>: cinco versões do logótipo geradas a partir do vetor confirmado, com paleta harmonizada e par tipográfico editorial.
+            </li>
+          </ul>
+          <ul className="space-y-2.5">
+            <li>
+              • <strong>Capas e publicações coerentes</strong>: propostas Moderna e Clássica nascidas do seu logótipo, respeitando as zonas seguras por plataforma e apenas os dados reais preenchidos.
+            </li>
+            <li>
+              • <strong>Estacionário e guia de marca</strong>: assinatura de email HTML, cartão de visita (91×61 mm) e papel de carta A4 para impressão, além de guia de marca de uma página.
+            </li>
+            <li>
+              • <strong>Pré-visualização e entrega final</strong>: confirme todas as 36 peças no computador ou telemóvel antes de descarregar o arquivo ZIP completo.
+            </li>
+          </ul>
         </div>
       </section>
     </div>

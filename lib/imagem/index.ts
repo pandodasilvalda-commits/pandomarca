@@ -108,7 +108,7 @@ export function getPublicImagemConfig(): PublicImagemConfig {
     semCustosReais: cfg.modo === "falso",
     etiquetaModo:
       cfg.modo === "falso"
-        ? "Modo de demonstração sem custos (amostras locais)"
+        ? "Modo de demonstração"
         : `Fornecedor configurado (${cfg.fornecedor || "por definir"})`,
   };
 }
@@ -396,7 +396,7 @@ export async function ajustarPropostaLogotipo(params: {
     ...params.proposta,
     id: `${params.proposta.id}-aj${ajusteNumero}`,
     subtitulo: `Versão afinada (Ajuste ${ajusteNumero}/${cfg.maxAjustes})`,
-    racional: `Aplicado pedido do cliente: «${instrucaoLimpa}». Pronto para vetorização local gratuita.`,
+    racional: `Aplicado pedido de ajuste: «${instrucaoLimpa}». Pronto para confirmar em vetor.`,
     ajusteNumero,
     origem: edited.origem,
     fixtureNome: edited.fixtureNome,
