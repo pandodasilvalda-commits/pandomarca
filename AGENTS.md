@@ -1,3 +1,12 @@
+# AGENTS.md — PandoMarca
+
+1. Antes de qualquer trabalho, lê PASSAGEM.md (estado atual e próximos passos).
+2. Segue as regras em docs/REGRAS_LIMITES.md.
+3. No fim de cada passo: atualiza PASSAGEM.md, faz commit e push.
+4. Nunca escrevas palavras-passe, chaves ou tokens em ficheiros ou mensagens. Usa variáveis de ambiente (ver `.env.example`).
+5. Não actives overage nem créditos extra pagos. Não publiques em produção, não cries custos e não contactes clientes sem ordem explícita do Bernardo.
+6. Escreve em português de Portugal nos documentos e na interface.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 ## This is NOT the Next.js you know
