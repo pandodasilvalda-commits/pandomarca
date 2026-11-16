@@ -3,6 +3,8 @@ import os from "os";
 import path from "path";
 import crypto from "crypto";
 import { BrandData, BrandPalette, FontPairId, StyleGroupOverrides, StyleId } from "./formats";
+import type { CoverLayoutId } from "./capas/catalog";
+import type { LogoVisualDna } from "./imagem/types";
 
 const BASE_TMP_DIR = path.join(/*turbopackIgnore: true*/ os.tmpdir(), "pandomarca");
 const DRAFTS_DIR = path.join(/*turbopackIgnore: true*/ BASE_TMP_DIR, "rascunhos");
@@ -10,6 +12,13 @@ const KITS_DIR = path.join(/*turbopackIgnore: true*/ BASE_TMP_DIR, "kits");
 
 export const DRAFT_TTL_MS = 2 * 60 * 60 * 1000; // 2 horas
 export const KIT_TTL_MS = 6 * 60 * 60 * 1000; // 6 horas
+
+export interface VectorStatsMeta {
+  byteSize: number;
+  colorsHex: string[];
+  under200Kb: boolean;
+  within8Colors: boolean;
+}
 
 export interface DraftMeta {
   id: string;
@@ -26,6 +35,14 @@ export interface DraftMeta {
   isDarkMonochrome: boolean;
   paletaExtraida: BrandPalette;
   svgSource?: string;
+  vectorizedSvg?: string;
+  simboloSvg?: string;
+  simboloNegativoSvg?: string;
+  monochromeSvg?: string;
+  negativeSvg?: string;
+  vectorStats?: VectorStatsMeta;
+  sessaoImagemId?: string;
+  logoDna?: LogoVisualDna;
   variantesEntradaA?: {
     horizontalSvg: string;
     verticalSvg: string;
@@ -47,7 +64,9 @@ export interface KitMeta {
   paleta: BrandPalette;
   fontPairId: FontPairId;
   kitStyle: StyleId;
+  coverLayoutId?: CoverLayoutId;
   styleOverrides: StyleGroupOverrides;
+  coverArtOrigins?: Record<string, string>;
   files: string[];
 }
 
@@ -79,6 +98,25 @@ export function saveDraft(
   );
   if (iconPng) {
     fs.writeFileSync(path.join(/*turbopackIgnore: true*/ dir, "icon.png"), iconPng);
+  }
+}
+
+export function updateDraftMeta(
+  draftId: string,
+  patch: Partial<DraftMeta>
+): DraftMeta | null {
+  ensureDirs();
+  const cleanId = draftId.replace(/[^a-zA-Z0-9_-]/g, "");
+  const dir = path.join(/*turbopackIgnore: true*/ DRAFTS_DIR, cleanId);
+  const metaPath = path.join(/*turbopackIgnore: true*/ dir, "meta.json");
+  if (!fs.existsSync(metaPath)) return null;
+  try {
+    const prev = JSON.parse(fs.readFileSync(metaPath, "utf8")) as DraftMeta;
+    const next: DraftMeta = { ...prev, ...patch };
+    fs.writeFileSync(metaPath, JSON.stringify(next, null, 2), "utf8");
+    return next;
+  } catch {
+    return null;
   }
 }
 

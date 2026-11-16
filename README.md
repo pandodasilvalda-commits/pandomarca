@@ -15,7 +15,7 @@ O PandoMarca distingue dois direitos de acesso de igual peso funcional:
 
 ---
 
-## 2. Como Correr em Local (`http://127.0.0.1:4317`)
+## 2. Como Correr em Local e Preparar para Deploy (Português Europeu)
 
 ### Pré-requisitos
 - **Node.js 22+** e `npm`
@@ -24,64 +24,81 @@ O PandoMarca distingue dois direitos de acesso de igual peso funcional:
 
 1. Instale as dependências:
    ```bash
-   npm install
+   npm ci
    ```
 
-2. Copie o ficheiro `.env.example` para `.env.local` e preencha os valores de desenvolvimento local:
+2. Copie `.env.example` para `.env.local` (nunca guarde chaves ou segredos no repositório):
    ```bash
    cp .env.example .env.local
    ```
-   Exemplo de valores apenas para desenvolvimento local em `.env.local`:
+   Exemplo de valores apenas para desenvolvimento/testes sem custos em `.env.local`:
    ```env
    KIT_ACCESS_CODE_WEBSITE=kit-website-demo
    KIT_ACCESS_CODE_STANDALONE=kit-individual-demo
    KIT_GATE_SECRET=um-segredo-local
-   AI_IMAGE_PROVIDER=
-   AI_IMAGE_API_KEY=
-   AI_IMAGE_ENDPOINT=
-   AI_IMAGE_MODEL=
+   IMAGEM_MODO=falso
+   IMAGEM_FORNECEDOR=
+   IMAGEM_MODELO=
+   GEMINI_API_KEY=
+   RECRAFT_API_KEY=
+   IMAGEM_LIMITE_POR_KIT_EUR=1.5
+   IMAGEM_MAX_RONDAS=3
+   IMAGEM_MAX_AJUSTES=3
    ```
-   > **Nota de segurança**: Nunca utilize estes valores em produção e nunca guarde chaves ou segredos reais no repositório.
 
-3. Inicie o servidor de desenvolvimento (configurado na porta `4317`):
+3. Variáveis de ambiente documentadas:
+   - `KIT_ACCESS_CODE_WEBSITE`: código de acesso da oferta do website (`website_bonus`).
+   - `KIT_ACCESS_CODE_STANDALONE`: código de acesso do kit individual (`standalone`).
+   - `KIT_GATE_SECRET`: segredo HMAC-SHA256 para assinar cookies `HttpOnly`.
+   - `IMAGEM_MODO`: `falso` (por omissão, sem custos; usa amostras locais em `tests/fixtures/`) ou `real`.
+   - `IMAGEM_FORNECEDOR`: fornecedor futuro (`gemini` ou `recraft`).
+   - `IMAGEM_MODELO`: identificador do modelo quando `IMAGEM_MODO=real`.
+   - `GEMINI_API_KEY` / `RECRAFT_API_KEY`: chaves da API (sempre vazias em `.env.example` e sem chamadas ativas nesta fase).
+   - `IMAGEM_LIMITE_POR_KIT_EUR`, `IMAGEM_MAX_RONDAS`, `IMAGEM_MAX_AJUSTES`: teto de custo por kit (EUR) e limites configuráveis de rondas e ajustes.
+
+4. Servidor local de desenvolvimento (porta `4317`):
    ```bash
    npm run dev
    ```
    Abra no navegador: **http://127.0.0.1:4317**
 
-4. Para executar a bateria de testes automáticos (validação de acessos, segurança SVG, remoção de fundo, 6 estilos, Entrada A e medidas exactas dos 36 ficheiros):
+5. Verificações obrigatórias:
    ```bash
+   npx tsc --noEmit
+   npm run lint
    npm test
    ```
 
-5. Para validar a compilação de produção sem avisos:
+6. Compilação e execução de produção (preparado para deploy — **sem publicação automática**):
    ```bash
    npm run build
+   npm start
    ```
+   Em produção online, configure as variáveis acima no servidor de destino (mantendo `NODE_ENV=production` para ativar cookies `Secure`), nunca expondo segredos nem variáveis privadas no código de cliente.
 
 ---
 
-## 3. Fornecedor de IA Encaixável e Gerador Vectorial SVG
+## 3. Camada de IA Trocável, Vetorização Local e Capas Nascidas do Logótipo
 
-Na **Entrada A (logótipo de raiz)**, a aplicação suporta duas vias:
-- **Gerador próprio em SVG (`lib/logo-generator/svg-studio.ts`)**: disponível sempre, sem custos de API e sem chaves externas. Compõe símbolos originais desenhados para o sector e iniciais da marca com tipografia Fontsource convertida em curvas vectoriais.
-- **Fornecedor de IA por variáveis de ambiente (`lib/logo-generator/ai-provider.ts`)**: configurável através de `AI_IMAGE_PROVIDER`, `AI_IMAGE_API_KEY`, `AI_IMAGE_ENDPOINT` e `AI_IMAGE_MODEL`. Quando vazias (configuração por omissão), a aplicação usa automaticamente o gerador SVG próprio sem interromper o fluxo.
+- **Camada encaixável em `lib/imagem/`**: interface unificada (`gerar`, `editar`, `removerFundo`, `vetorizar`), adaptadores estruturais vazios `gemini.ts` e `recraft.ts` (sem chamadas pagas), controlador de custo por kit (`lib/imagem/custo.ts`) com bloqueio acima do limite e prompts em `lib/imagem/prompts/*.md` (logótipos sem slogans nem texto extra; capas/fundos sem texto nenhum). O gerador geométrico (`lib/logo-generator/svg-studio.ts`) permanece disponível como reserva gratuita.
+- **Vetorização local gratuita (`lib/vetorizar.ts`)**: utiliza `@neplex/vectorizer` (`vtracer`) e `potrace` para converter em SVG limpo com redução até 8 cores e tamanho inferior a 200 KB, seguido de ecrã **Confirmar vetor** com comparação Original vs Vetor e pré-visualização dedicada a 32 px (versões clara e escura). Todas as 5 variantes oficiais saem diretamente do vetor confirmado.
+- **Capas e publicações nascidas do logótipo (`lib/capas/` e `lib/imagem/referencia.ts`)**: o prompt de cada capa e publicação Instagram recebe a referência do logótipo escolhido (`logotipoReferencia`), a paleta e o ADN visual (`logotipoDna` — formas, motivos e estilo), compondo em código apenas o logótipo vetorizado adaptado, as zonas seguras por plataforma (YouTube `1544×423`, avatares inferiores à esquerda), contraste WCAG AA e os textos reais do cliente (linhas vazias omitidas). Mantém o catálogo de 6 layouts (3 modernos, 3 clássicos) com propostas 1 Moderna + 1 Clássica.
 
 ---
 
 ## 4. Ensaio Obrigatório — Forno da Vilariça
 
-Tanto na **Entrada A** como na **Entrada B** existe um botão de preenchimento rápido para percorrer e validar o ensaio completo da marca fictícia **Forno da Vilariça**:
+O botão **Preencher ensaio: Forno da Vilariça** no assistente passo a passo preenche:
 - **Nome**: Forno da Vilariça
-- **Sector**: Restauração (Padaria)
+- **Sector**: Restauração e Alimentação
 - **Slogan**: «Pão de trigo ao nascer do dia»
-- **Serviços**: «Pão, broa e bolos de festa»
-- **Contacto**: Marta Queirós (Mestra Padeira e Sócia-Gerente, `marta@fornodavilarica.pt`, `+351 279 452 180`, `https://fornodavilarica.pt`, `Largo da Feira 14, 5360-310 Vila Flor`, NIF `514 892 307`)
-
-Além do Forno da Vilariça, a aplicação inclui também o exemplo histórico **Oficina do São**.
+- **Serviços**: «Padaria tradicional • Pão em forno a lenha e broa»
+- **Localidade**: «Rua do Forno 14, 5160-242 Torre de Moncorvo»
+- **Contacto**: Marta Queirós (Mestra Padeira e Sócia-Gerente, `marta@fornodavilarica.pt`, `+351 279 452 180`, `https://fornodavilarica.pt`, NIF `514 892 307`)
 
 ---
 
 ## 5. Documentação Técnica e Decisões em Aberto
 
-Consulte [`docs/SPEC.md`](docs/SPEC.md) para a especificação detalhada do fluxo, ecrãs, tabela das 36 peças com ligações para as fontes oficiais (data de referência: 15 de novembro de 2026), arquitetura e lista de decisões em aberto (pagamentos Stripe, contas de utilizador, revisão humana e domínio de produção).
+Consulte [`docs/SPEC.md`](docs/SPEC.md) para a especificação dos 36 ficheiros com ligações oficiais (data de referência: 15 de novembro de 2026) e decisões futuras (pagamentos Stripe, contas, revisão humana PandoWeb e domínio final).
+

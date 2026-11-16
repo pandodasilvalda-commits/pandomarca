@@ -77,7 +77,7 @@ export const SAMPLE_BRANDS: Record<SampleBrandPreset["id"], SampleBrandPreset> =
   "forno-da-vilarica": {
     id: "forno-da-vilarica",
     titulo: "Forno da Vilariça",
-    subtitulo: "Ensaio obrigatório — Padaria artesanal (Restauração)",
+    subtitulo: "Ensaio obrigatório — Padaria tradicional em Torre de Moncorvo",
     dados: {
       nome: "Forno da Vilariça",
       sector: "restauracao",
@@ -88,9 +88,9 @@ export const SAMPLE_BRANDS: Record<SampleBrandPreset["id"], SampleBrandPreset> =
       email: "marta@fornodavilarica.pt",
       telefone: "+351 279 452 180",
       website: "https://fornodavilarica.pt",
-      morada: "Largo da Feira 14, 5360-310 Vila Flor",
+      morada: "Rua do Forno 14, 5160-242 Torre de Moncorvo",
       nif: "514 892 307",
-      servicos: "Pão, broa e bolos de festa",
+      servicos: "Padaria tradicional • Pão em forno a lenha e broa",
     },
     svg: FORNO_DA_VILARICA_SVG,
     questionarioA: {

@@ -1,0 +1,63 @@
+{
+  "id": "moderno-monolito",
+  "nome": "Moderno «Bloco Assimétrico»",
+  "categoria": "moderno",
+  "descricao": "Bloco geométrico assimétrico com círculos recortados, padrão arquitectónico e foco limpo no logótipo em zona segura.",
+  "estiloSugerido": "degrade",
+  "camadas": [
+    "fundo",
+    "padrao",
+    "tipografia_grande",
+    "objeto_recortado",
+    "moldura_recorte",
+    "logotipo",
+    "textos_reais"
+  ],
+  "fundo": {
+    "tipo": "degrade_primaria",
+    "baseCor": "primaria",
+    "acentoCor": "secundaria",
+    "usaFotoDeFundo": false
+  },
+  "padrao": {
+    "motivo": "arcos-minimal",
+    "opacidade": 0.11,
+    "escala": 64
+  },
+  "tipografiaGrande": {
+    "habilitada": true,
+    "origem": "primeira_palavra_marca",
+    "alinhamento": "right",
+    "opacidade": 0.16,
+    "escalaAltura": 0.54,
+    "peso": 700,
+    "cor": "papel"
+  },
+  "objetoRecortado": {
+    "habilitado": false,
+    "posicao": "right-bottom",
+    "larguraRatio": 0.18,
+    "alturaRatio": 0.48,
+    "sobrepoeTipografiaGrande": true,
+    "nuncaSobrepoeLogo": true
+  },
+  "molduraRecorte": {
+    "tipo": "circulo_corte",
+    "cor": "secundaria",
+    "espessuraPx": 4
+  },
+  "logotipo": {
+    "posicao": "left-center",
+    "alturaMinRatio": 0.4,
+    "alturaAlvoRatio": 0.46,
+    "larguraMaxRatio": 0.5
+  },
+  "textosReais": {
+    "posicao": "right-panel",
+    "mostrarNomeSeLogoTemTexto": false,
+    "mostrarSlogan": true,
+    "mostrarServicos": true,
+    "mostrarLocalidade": true,
+    "mostrarContactos": true
+  }
+}

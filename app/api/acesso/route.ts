@@ -7,6 +7,7 @@ import {
   verifyAccessCode,
   verifyEntitlementCookie,
 } from "@/lib/access";
+import { getPublicImagemConfig } from "@/lib/imagem";
 
 export async function GET(req: NextRequest) {
   const configStatus = getAccessConfigStatus();
@@ -18,6 +19,7 @@ export async function GET(req: NextRequest) {
     missingVars: configStatus.missingVars,
     authenticated: Boolean(entitlement),
     entitlement,
+    imagemConfig: getPublicImagemConfig(),
   });
 }
 

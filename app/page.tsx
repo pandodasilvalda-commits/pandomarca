@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   Compass,
   FileArchive,
-  Layers,
   PenTool,
   ShieldCheck,
   Sparkles,
@@ -249,23 +248,23 @@ export default function HomePage() {
             </h3>
             <ul className="space-y-2.5 text-sm text-stone-700">
               <li>• Validação de código por ambiente (<code>website_bonus</code> e <code>standalone</code>) com cookie HttpOnly assinado válido por 12 horas.</li>
-              <li>• <strong>Entrada A</strong>: Questionário, 1 a 5 referências com nota, 2 direções de estúdio, até 3 rondas de afinação («Mostrar outras 2») e 5 variantes finais.</li>
-              <li>• <strong>Entrada B</strong>: Carregamento PNG/JPG/SVG até 8 MB, remoção de fundo liso ligado à margem, extração de paleta e diagnóstico de nitidez.</li>
-              <li>• Quatro propostas distintas de paleta e par tipográfico (5 pares Fontsource OFL locais) e catálogo de 6 estilos de conteúdo ajustáveis por grupo.</li>
-              <li>• Pré-visualização completa no browser e descarregamento do ZIP com 36 ficheiros verificados ao píxel e ao milímetro.</li>
+              <li>• <strong>Entrada A</strong>: 2 propostas distintas (clássica vs moderna) com contador de rondas, ajustes e camada trocável (sem custos em modo de teste) + reserva SVG.</li>
+              <li>• <strong>Vetorização local gratuita e Entrada B</strong>: SVG limpo (&le; 8 cores, &lt; 200 KB) por <code>vtracer</code> e <code>potrace</code>, confirmação com pré-visualização a 32 px e remoção automática de fundo.</li>
+              <li>• <strong>Capas em 7 camadas</strong>: sempre 1 layout Moderno e 1 Clássico com contraste WCAG AA, zonas seguras por plataforma e dados reais do cliente.</li>
+              <li>• Pré-visualização completa no browser (desktop e telemóvel), guarda de sessão e descarregamento do ZIP com 36 ficheiros verificados.</li>
             </ul>
           </div>
 
           <div className="space-y-4">
             <h3 className="text-xl font-bold text-stone-900 flex items-center gap-2">
               <Compass className="h-5 w-5 text-amber-800" />
-              <span>O que ainda não existe nesta versão (previsto para futuro)</span>
+              <span>O que ainda falta antes de abrir em produção</span>
             </h3>
             <ul className="space-y-2.5 text-sm text-stone-700">
+              <li>• <strong>Ligação paga desativada nesta versão</strong>: camada pronta em <code>lib/imagem/</code> para Gemini/Recraft, mantendo <code>IMAGEM_MODO=falso</code> sem chaves nem chamadas externas.</li>
               <li>• <strong>Sem pagamentos nem checkout</strong>: não há integração Stripe (cartão, MB Way ou Multibanco) nem cobrança nesta fase.</li>
               <li>• <strong>Sem contas de utilizador nem base de dados</strong>: o acesso é feito apenas por código e os rascunhos/kits são guardados temporariamente em disco local.</li>
-              <li>• <strong>Sem revisão humana ativa</strong>: a revisão opcional pela equipa PandoWeb e a emissão automática de códigos por cliente estão apenas previstas na arquitetura.</li>
-              <li>• <strong>Sem deploy nem domínio de produção fechado</strong>: aplicação desenhada para execução e verificação local.</li>
+              <li>• <strong>Sem publicação ativa</strong>: build preparado para deploy e uso online, aguardando definição de domínio e chaves finais.</li>
             </ul>
           </div>
         </div>

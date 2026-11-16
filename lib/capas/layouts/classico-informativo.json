@@ -1,0 +1,64 @@
+{
+  "id": "classico-informativo",
+  "nome": "Clássico «Informativo»",
+  "categoria": "classico",
+  "descricao": "Estrutura editorial clara com barra lateral sólida, cartão de especialidades e apenas os dados reais preenchidos pelo cliente (nunca exemplos fictícios).",
+  "estiloSugerido": "informativo",
+  "camadas": [
+    "fundo",
+    "padrao",
+    "tipografia_grande",
+    "objeto_recortado",
+    "moldura_recorte",
+    "logotipo",
+    "textos_reais"
+  ],
+  "fundo": {
+    "tipo": "solido_paleta",
+    "baseCor": "papel",
+    "acentoCor": "tinta",
+    "usaFotoDeFundo": false
+  },
+  "padrao": {
+    "motivo": "linhas-editorial",
+    "opacidade": 0.05,
+    "escala": 40
+  },
+  "tipografiaGrande": {
+    "habilitada": false,
+    "origem": "iniciais_ou_sector",
+    "alinhamento": "right",
+    "opacidade": 0.06,
+    "escalaAltura": 0.36,
+    "peso": 700,
+    "cor": "primaria"
+  },
+  "objetoRecortado": {
+    "habilitado": false,
+    "posicao": "right-corner-vignette",
+    "larguraRatio": 0.16,
+    "alturaRatio": 0.42,
+    "sobrepoeTipografiaGrande": false,
+    "nuncaSobrepoeLogo": true
+  },
+  "molduraRecorte": {
+    "tipo": "barra_editorial_e_selo",
+    "corBorda": "primaria",
+    "corRodape": "tinta",
+    "espessuraPx": 3
+  },
+  "logotipo": {
+    "posicao": "left-center",
+    "alturaMinRatio": 0.36,
+    "alturaAlvoRatio": 0.42,
+    "larguraMaxRatio": 0.5
+  },
+  "textosReais": {
+    "posicao": "right-structured",
+    "mostrarNomeSeLogoTemTexto": false,
+    "mostrarSlogan": true,
+    "mostrarServicos": true,
+    "mostrarLocalidade": true,
+    "mostrarContactos": true
+  }
+}

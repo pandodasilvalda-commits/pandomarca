@@ -1,0 +1,64 @@
+{
+  "id": "classico-rotulo",
+  "nome": "Clássico «Rótulo»",
+  "categoria": "classico",
+  "descricao": "Papel com textura artesanal, padrão geométrico em linha fina, emblema central tipo rótulo em arco e tipografia de ofício tradicional.",
+  "estiloSugerido": "padrao",
+  "camadas": [
+    "fundo",
+    "padrao",
+    "tipografia_grande",
+    "objeto_recortado",
+    "moldura_recorte",
+    "logotipo",
+    "textos_reais"
+  ],
+  "fundo": {
+    "tipo": "textura_papel",
+    "baseCor": "papel",
+    "acentoCor": "secundaria",
+    "usaFotoDeFundo": false
+  },
+  "padrao": {
+    "motivo": "arco-linha-fina",
+    "opacidade": 0.11,
+    "escala": 54
+  },
+  "tipografiaGrande": {
+    "habilitada": false,
+    "origem": "iniciais_ou_sector",
+    "alinhamento": "left",
+    "opacidade": 0.08,
+    "escalaAltura": 0.38,
+    "peso": 700,
+    "cor": "secundaria"
+  },
+  "objetoRecortado": {
+    "habilitado": true,
+    "posicao": "right-edge-botanical",
+    "larguraRatio": 0.2,
+    "alturaRatio": 0.6,
+    "sobrepoeTipografiaGrande": false,
+    "nuncaSobrepoeLogo": true
+  },
+  "molduraRecorte": {
+    "tipo": "emblema_rotulo_arco",
+    "corBorda": "tinta",
+    "corFundoCartao": "papel",
+    "espessuraPx": 2
+  },
+  "logotipo": {
+    "posicao": "left-emblem",
+    "alturaMinRatio": 0.36,
+    "alturaAlvoRatio": 0.42,
+    "larguraMaxRatio": 0.49
+  },
+  "textosReais": {
+    "posicao": "center-emblem-right",
+    "mostrarNomeSeLogoTemTexto": false,
+    "mostrarSlogan": true,
+    "mostrarServicos": true,
+    "mostrarLocalidade": true,
+    "mostrarContactos": false
+  }
+}

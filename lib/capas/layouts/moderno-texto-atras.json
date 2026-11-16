@@ -1,0 +1,63 @@
+{
+  "id": "moderno-texto-atras",
+  "nome": "Moderno «Texto atrás»",
+  "categoria": "moderno",
+  "descricao": "Palavra enorme editorial em segundo plano parcialmente sobreposta por objeto recortado no primeiro plano, com logótipo e contactos em zona segura.",
+  "estiloSugerido": "liso",
+  "camadas": [
+    "fundo",
+    "padrao",
+    "tipografia_grande",
+    "objeto_recortado",
+    "moldura_recorte",
+    "logotipo",
+    "textos_reais"
+  ],
+  "fundo": {
+    "tipo": "degrade_suave",
+    "baseCor": "tinta",
+    "acentoCor": "primaria",
+    "usaFotoDeFundo": false
+  },
+  "padrao": {
+    "motivo": "linhas-obliquas",
+    "opacidade": 0.08,
+    "escala": 42
+  },
+  "tipografiaGrande": {
+    "habilitada": true,
+    "origem": "primeira_palavra_marca",
+    "alinhamento": "right",
+    "opacidade": 0.24,
+    "escalaAltura": 0.62,
+    "peso": 800,
+    "cor": "secundaria"
+  },
+  "objetoRecortado": {
+    "habilitado": true,
+    "posicao": "right-center",
+    "larguraRatio": 0.24,
+    "alturaRatio": 0.72,
+    "sobrepoeTipografiaGrande": true,
+    "nuncaSobrepoeLogo": true
+  },
+  "molduraRecorte": {
+    "tipo": "faixa_inferior",
+    "cor": "primaria",
+    "espessuraPx": 10
+  },
+  "logotipo": {
+    "posicao": "left-center",
+    "alturaMinRatio": 0.38,
+    "alturaAlvoRatio": 0.44,
+    "larguraMaxRatio": 0.56
+  },
+  "textosReais": {
+    "posicao": "bottom-left",
+    "mostrarNomeSeLogoTemTexto": false,
+    "mostrarSlogan": true,
+    "mostrarServicos": true,
+    "mostrarLocalidade": true,
+    "mostrarContactos": true
+  }
+}

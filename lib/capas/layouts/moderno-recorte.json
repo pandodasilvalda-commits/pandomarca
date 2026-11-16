@@ -1,0 +1,64 @@
+{
+  "id": "moderno-recorte",
+  "nome": "Moderno «Recorte»",
+  "categoria": "moderno",
+  "descricao": "Fotografia recortada dentro de arco geométrico à margem direita e metade em cor sólida com padrão discreto à esquerda para logótipo e dados.",
+  "estiloSugerido": "fotografia",
+  "camadas": [
+    "fundo",
+    "padrao",
+    "tipografia_grande",
+    "objeto_recortado",
+    "moldura_recorte",
+    "logotipo",
+    "textos_reais"
+  ],
+  "fundo": {
+    "tipo": "solido_paleta",
+    "baseCor": "papel",
+    "acentoCor": "primaria",
+    "usaFotoDeFundo": false
+  },
+  "padrao": {
+    "motivo": "grelha-pontos",
+    "opacidade": 0.1,
+    "escala": 28
+  },
+  "tipografiaGrande": {
+    "habilitada": true,
+    "origem": "iniciais_ou_sector",
+    "alinhamento": "right",
+    "opacidade": 0.14,
+    "escalaAltura": 0.46,
+    "peso": 800,
+    "cor": "papel"
+  },
+  "objetoRecortado": {
+    "habilitado": true,
+    "posicao": "edge-right-clip",
+    "larguraRatio": 0.2,
+    "alturaRatio": 0.56,
+    "sobrepoeTipografiaGrande": true,
+    "nuncaSobrepoeLogo": true
+  },
+  "molduraRecorte": {
+    "tipo": "recorte_arco_margem",
+    "lado": "direita",
+    "larguraFotoRatio": 0.36,
+    "corBorda": "primaria"
+  },
+  "logotipo": {
+    "posicao": "left-top",
+    "alturaMinRatio": 0.36,
+    "alturaAlvoRatio": 0.42,
+    "larguraMaxRatio": 0.44
+  },
+  "textosReais": {
+    "posicao": "left-bottom",
+    "mostrarNomeSeLogoTemTexto": false,
+    "mostrarSlogan": true,
+    "mostrarServicos": true,
+    "mostrarLocalidade": true,
+    "mostrarContactos": true
+  }
+}

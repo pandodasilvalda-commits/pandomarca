@@ -3,7 +3,6 @@ import { Resvg } from "@resvg/resvg-js";
 import { BrandPalette, RGBColor } from "./formats";
 import { buildBrandPalette, hslToHex, rgbToHex, rgbToHsl } from "./palette";
 import { createRandomId, DRAFT_TTL_MS, DraftMeta, saveDraft } from "./storage";
-import { getSatoriFontsForPair } from "./fonts";
 
 export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // 8 MB
 
@@ -272,6 +271,84 @@ export async function analyzeAndStoreLogo(params: {
         if (x < width - 1) tryEnqueue(x + 1, y);
         if (y > 0) tryEnqueue(x, y - 1);
         if (y < height - 1) tryEnqueue(x, y + 1);
+      }
+
+      if (width > height * 1.25) {
+        let splitX: number | null = null;
+        let seenLeft = false;
+        const minSx = Math.round(width * 0.16);
+        const maxSx = Math.min(width - 8, Math.round(width * 0.65));
+        for (let x = minSx; x <= maxSx; x++) {
+          let colOp = 0;
+          for (let y = 0; y < height; y++) {
+            if (rgba[getIdx(x, y) + 3] > 32) colOp++;
+          }
+          if (colOp > 0) {
+            seenLeft = true;
+          } else if (seenLeft && colOp === 0) {
+            splitX = x;
+            break;
+          }
+        }
+
+        if (splitX !== null) {
+          let wx0 = width;
+          let wx1 = 0;
+          let wy0 = height;
+          let wy1 = 0;
+          let wmOpaque = 0;
+          for (let y = 0; y < height; y++) {
+            for (let x = splitX; x < width; x++) {
+              if (rgba[getIdx(x, y) + 3] >= 128) {
+                wmOpaque++;
+                if (x < wx0) wx0 = x;
+                if (x > wx1) wx1 = x;
+                if (y < wy0) wy0 = y;
+                if (y > wy1) wy1 = y;
+              }
+            }
+          }
+          const wmArea = Math.max(1, (wx1 - wx0 + 1) * (wy1 - wy0 + 1));
+          if (wmOpaque > 0 && wmOpaque / wmArea < 0.65) {
+            for (let y = wy0; y <= wy1; y++) {
+              for (let x = wx0; x <= wx1; x++) {
+                const pIdx = y * width + x;
+                const idx = pIdx * 4;
+                if (rgba[idx + 3] < 24) continue;
+                const c = { r: rgba[idx], g: rgba[idx + 1], b: rgba[idx + 2] };
+                if (colorDist(c, marginColor) <= 68) {
+                  visited[pIdx] = 1;
+                  rgba[idx + 3] = 0;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      for (let pass = 0; pass < 2; pass++) {
+        const haloPixels: number[] = [];
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const pIdx = y * width + x;
+            if (visited[pIdx] || rgba[pIdx * 4 + 3] < 24) continue;
+            const adj =
+              (x > 0 && visited[pIdx - 1] === 1) ||
+              (x < width - 1 && visited[pIdx + 1] === 1) ||
+              (y > 0 && visited[pIdx - width] === 1) ||
+              (y < height - 1 && visited[pIdx + width] === 1);
+            if (!adj) continue;
+            const idx = pIdx * 4;
+            const c = { r: rgba[idx], g: rgba[idx + 1], b: rgba[idx + 2] };
+            if (colorDist(c, marginColor) <= 95) {
+              haloPixels.push(pIdx);
+            }
+          }
+        }
+        for (const pIdx of haloPixels) {
+          visited[pIdx] = 1;
+          rgba[pIdx * 4 + 3] = 0;
+        }
       }
     } else {
       backgroundStatus = "non_uniform_margin";

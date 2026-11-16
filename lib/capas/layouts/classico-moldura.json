@@ -1,0 +1,64 @@
+{
+  "id": "classico-moldura",
+  "nome": "Clássico «Moldura»",
+  "categoria": "classico",
+  "descricao": "Moldura fina dupla clássica sobre papel quente, faixa creme em destaque, tipografia editorial serifada e composição simétrica equilibrada.",
+  "estiloSugerido": "minimal",
+  "camadas": [
+    "fundo",
+    "padrao",
+    "tipografia_grande",
+    "objeto_recortado",
+    "moldura_recorte",
+    "logotipo",
+    "textos_reais"
+  ],
+  "fundo": {
+    "tipo": "solido_paleta",
+    "baseCor": "papel",
+    "acentoCor": "primaria",
+    "usaFotoDeFundo": false
+  },
+  "padrao": {
+    "motivo": "malha-classica",
+    "opacidade": 0.06,
+    "escala": 46
+  },
+  "tipografiaGrande": {
+    "habilitada": false,
+    "origem": "primeira_palavra_marca",
+    "alinhamento": "center",
+    "opacidade": 0.06,
+    "escalaAltura": 0.42,
+    "peso": 700,
+    "cor": "primaria"
+  },
+  "objetoRecortado": {
+    "habilitado": true,
+    "posicao": "right-corner-vignette",
+    "larguraRatio": 0.16,
+    "alturaRatio": 0.45,
+    "sobrepoeTipografiaGrande": false,
+    "nuncaSobrepoeLogo": true
+  },
+  "molduraRecorte": {
+    "tipo": "moldura_dupla_e_faixa_creme",
+    "corBorda": "primaria",
+    "corFaixa": "papel",
+    "espessuraPx": 2
+  },
+  "logotipo": {
+    "posicao": "center-upper",
+    "alturaMinRatio": 0.36,
+    "alturaAlvoRatio": 0.42,
+    "larguraMaxRatio": 0.56
+  },
+  "textosReais": {
+    "posicao": "center-ribbon-bottom",
+    "mostrarNomeSeLogoTemTexto": false,
+    "mostrarSlogan": true,
+    "mostrarServicos": false,
+    "mostrarLocalidade": true,
+    "mostrarContactos": true
+  }
+}

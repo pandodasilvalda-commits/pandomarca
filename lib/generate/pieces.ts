@@ -12,7 +12,19 @@ import {
   StyleId,
 } from "../formats";
 import { getSatoriFontsForPair } from "../fonts";
-import { getContrastingTextHex, hexToRgb, mixHex, rgbToHsl } from "../palette";
+import {
+  contrastRatio,
+  getContrastingTextHex,
+  hexToRgb,
+  mixHex,
+  relativeLuminance,
+  rgbToHex,
+  rgbToHsl,
+} from "../palette";
+import { CoverLayoutId, getDefaultCoverLayoutIdForStyle } from "../capas/catalog";
+import { renderLayeredCover } from "../capas/composer";
+import { gerarArtePublicacaoDaMarca, type LogoVisualDna } from "../imagem";
+import { adaptVectorSvgForSurface } from "../vetorizar";
 
 const h = React.createElement;
 
@@ -21,11 +33,129 @@ export function mmToPt(mm: number): number {
 }
 
 /**
+ * Converte píxeis do wordmark por aglomerados de cor reais (nunca píxel-a-píxel isolado)
+ * para eliminar qualquer efeito salpicado em letras coloridas ou com anti-aliasing em fundos escuros.
+ */
+async function convertDarkSurfaceWordmarkClustered(
+  data: Buffer | Uint8Array,
+  w: number,
+  hPx: number,
+  splitX: number,
+  surfaceHex: string
+): Promise<Uint8Array> {
+  const out = new Uint8Array(data);
+  const clusters: {
+    rSum: number;
+    gSum: number;
+    bSum: number;
+    count: number;
+    target?: [number, number, number];
+  }[] = [];
+
+  for (let y = 0; y < hPx; y += 2) {
+    for (let x = splitX; x < w; x += 2) {
+      const idx = (y * w + x) * 4;
+      if (out[idx + 3] < 195) continue;
+      const r = out[idx];
+      const g = out[idx + 1];
+      const b = out[idx + 2];
+      const hit = clusters.find(
+        (c) =>
+          Math.hypot(r - c.rSum / c.count, g - c.gSum / c.count, b - c.bSum / c.count) < 42
+      );
+      if (hit) {
+        hit.rSum += r;
+        hit.gSum += g;
+        hit.bSum += b;
+        hit.count++;
+      } else if (clusters.length < 8) {
+        clusters.push({ rSum: r, gSum: g, bSum: b, count: 1 });
+      }
+    }
+  }
+
+  for (const c of clusters) {
+    const r = Math.round(c.rSum / c.count);
+    const g = Math.round(c.gSum / c.count);
+    const b = Math.round(c.bSum / c.count);
+    const hex = rgbToHex({ r, g, b });
+    const hsl = rgbToHsl({ r, g, b });
+    const ratio = contrastRatio(hex, surfaceHex);
+    if (ratio >= 4.7 && hsl.l >= 50) {
+      c.target = [r, g, b];
+    } else if (hsl.s >= 32 && hsl.l >= 26) {
+      c.target = hsl.h >= 85 && hsl.h <= 255 ? [226, 240, 232] : [244, 184, 88];
+    } else {
+      c.target = [250, 248, 245];
+    }
+  }
+
+  if (clusters.length > 0) {
+    for (let y = 0; y < hPx; y++) {
+      for (let x = splitX; x < w; x++) {
+        const idx = (y * w + x) * 4;
+        if (out[idx + 3] < 10) continue;
+        const r = out[idx];
+        const g = out[idx + 1];
+        const b = out[idx + 2];
+        let best = clusters[0];
+        let bestD = Infinity;
+        for (const c of clusters) {
+          const d = Math.hypot(
+            r - c.rSum / c.count,
+            g - c.gSum / c.count,
+            b - c.bSum / c.count
+          );
+          if (d < bestD) {
+            bestD = d;
+            best = c;
+          }
+        }
+        if (best.target) {
+          out[idx] = best.target[0];
+          out[idx + 1] = best.target[1];
+          out[idx + 2] = best.target[2];
+        }
+      }
+    }
+  }
+
+  // No símbolo à esquerda, levanta apenas eventual pedestal horizontal escuro na base (y >= 77%)
+  if (splitX > 0) {
+    let minSymY = hPx;
+    let maxSymY = 0;
+    for (let y = 0; y < hPx; y++) {
+      for (let x = 0; x < splitX; x++) {
+        if (out[(y * w + x) * 4 + 3] >= 128) {
+          if (y < minSymY) minSymY = y;
+          if (y > maxSymY) maxSymY = y;
+        }
+      }
+    }
+    const pedestalY =
+      maxSymY > minSymY ? minSymY + Math.round((maxSymY - minSymY) * 0.77) : Math.round(hPx * 0.77);
+    for (let y = pedestalY; y < hPx; y++) {
+      for (let x = 0; x < splitX; x++) {
+        const idx = (y * w + x) * 4;
+        if (out[idx + 3] < 110) continue;
+        const hsl = rgbToHsl({ r: out[idx], g: out[idx + 1], b: out[idx + 2] });
+        if (hsl.l < 26) {
+          out[idx] = 250;
+          out[idx + 1] = 248;
+          out[idx + 2] = 245;
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
  * Gera a versão do logótipo para fundos escuros:
  * - Se o logótipo for escuro e quase sem cor (isDarkMonochrome), passa o desenho a branco (#FAF8F5).
- * - Se o logótipo for colorido, mantém todas as cores vivas e converte apenas os píxeis
- *   muito escuros (como texto castanho-escuro ou preto) em branco quente (#FAF8F5),
- *   garantindo leitura perfeita do nome e mantendo as cores do símbolo.
+ * - Se o logótipo for colorido horizontal, preserva a cavidade do símbolo à esquerda (levantando o pedestal)
+ *   e converte por aglomerados uniformes o texto escuro em #FAF8F5 e terracota escuro em #F4B858.
  */
 export async function createWhiteKnockoutLogo(
   processedPng: Buffer,
@@ -39,10 +169,31 @@ export async function createWhiteKnockoutLogo(
   const w = info.width;
   const hPx = info.height;
 
-  // Para logótipos horizontais coloridos (símbolo à esquerda + texto à direita),
-  // encontramos a separação entre o símbolo e o texto para preservar 100% das cores internas do símbolo.
+  if (isDarkMonochrome) {
+    const out = new Uint8Array(data.length);
+    for (let i = 0; i < data.length; i += 4) {
+      const a = data[i + 3];
+      if (a < 10) {
+        out[i] = data[i];
+        out[i + 1] = data[i + 1];
+        out[i + 2] = data[i + 2];
+        out[i + 3] = a;
+      } else {
+        out[i] = 250;
+        out[i + 1] = 248;
+        out[i + 2] = 245;
+        out[i + 3] = a;
+      }
+    }
+    return sharp(Buffer.from(out.buffer), {
+      raw: { width: w, height: hPx, channels: 4 },
+    })
+      .png()
+      .toBuffer();
+  }
+
   let wordmarkStartX = 0;
-  if (!isDarkMonochrome && w > hPx * 1.35) {
+  if (w > hPx * 1.35) {
     wordmarkStartX = Math.min(w, Math.round(hPx * 0.95));
     const minSearchX = Math.round(w * 0.22);
     const maxSearchX = Math.min(w - 10, Math.round(w * 0.68));
@@ -61,47 +212,16 @@ export async function createWhiteKnockoutLogo(
     }
   }
 
-  const out = new Uint8Array(data.length);
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    const a = data[i + 3];
-
-    if (a < 10) {
-      out[i] = r;
-      out[i + 1] = g;
-      out[i + 2] = b;
-      out[i + 3] = a;
-      continue;
-    }
-
-    if (isDarkMonochrome) {
-      out[i] = 250;
-      out[i + 1] = 248;
-      out[i + 2] = 245;
-      out[i + 3] = a;
-    } else {
-      const pxIndex = i / 4;
-      const x = pxIndex % w;
-      const hsl = rgbToHsl({ r, g, b });
-      // Mantém as cores vivas intactas; texto neutro escuro passa a branco quente para legibilidade sobre escuro
-      if (x >= wordmarkStartX && (hsl.l < 24 || (hsl.l < 38 && hsl.s < 48))) {
-        out[i] = 250;
-        out[i + 1] = 248;
-        out[i + 2] = 245;
-        out[i + 3] = a;
-      } else {
-        out[i] = r;
-        out[i + 1] = g;
-        out[i + 2] = b;
-        out[i + 3] = a;
-      }
-    }
-  }
+  const out = await convertDarkSurfaceWordmarkClustered(
+    data,
+    w,
+    hPx,
+    wordmarkStartX,
+    "#1E100A"
+  );
 
   return sharp(Buffer.from(out.buffer), {
-    raw: { width: info.width, height: info.height, channels: 4 },
+    raw: { width: w, height: hPx, channels: 4 },
   })
     .png()
     .toBuffer();
@@ -582,12 +702,71 @@ export async function renderStyleBackgroundBuffer(params: {
   return sharp(Buffer.from(svg)).resize(width, height).png().toBuffer();
 }
 
-function relLuminanceRgb(r: number, g: number, b: number): number {
-  const lin = (c: number) => {
-    const s = c / 255;
-    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-  };
-  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+async function sampleSurfaceRectHex(
+  bgPng: Buffer,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  w: number,
+  hPx: number
+): Promise<{ avgHex: string; minLum: number; maxLum: number }> {
+  const rx = Math.max(0, Math.min(width - 4, Math.round(x)));
+  const ry = Math.max(0, Math.min(height - 4, Math.round(y)));
+  const rw = Math.max(4, Math.min(width - rx, Math.round(w)));
+  const rh = Math.max(4, Math.min(height - ry, Math.round(hPx)));
+
+  const { data } = await sharp(bgPng)
+    .extract({ left: rx, top: ry, width: rw, height: rh })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const stepX = Math.max(1, Math.floor(rw / 16));
+  const stepY = Math.max(1, Math.floor(rh / 12));
+  let rS = 0;
+  let gS = 0;
+  let bS = 0;
+  let cnt = 0;
+  let minLum = 1;
+  let maxLum = 0;
+
+  for (let py = 0; py < rh; py += stepY) {
+    for (let px = 0; px < rw; px += stepX) {
+      const idx = (py * rw + px) * 3;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+      const hex = rgbToHex({ r, g, b });
+      const lum = relativeLuminance(hex);
+      rS += r;
+      gS += g;
+      bS += b;
+      cnt++;
+      if (lum < minLum) minLum = lum;
+      if (lum > maxLum) maxLum = lum;
+    }
+  }
+
+  const avgHex =
+    cnt > 0
+      ? rgbToHex({
+          r: Math.round(rS / cnt),
+          g: Math.round(gS / cnt),
+          b: Math.round(bS / cnt),
+        })
+      : "#1E100A";
+
+  return { avgHex, minLum, maxLum };
+}
+
+function pickWcagHexOnSurface(preferredHex: string, bgHex: string, minRatio = 4.5): string {
+  if (contrastRatio(preferredHex, bgHex) >= minRatio) return preferredHex;
+  const best = getContrastingTextHex(bgHex, "#FAF8F5", "#1C1917");
+  if (contrastRatio(best, bgHex) >= minRatio) return best;
+  return contrastRatio("#FFFFFF", bgHex) >= contrastRatio("#000000", bgHex)
+    ? "#FFFFFF"
+    : "#000000";
 }
 
 async function ensureWordmarkContrastOnDarkBg(
@@ -621,32 +800,14 @@ async function ensureWordmarkContrastOnDarkBg(
   }
   if (wordmarkStartX <= 0) return pngBuffer;
 
-  const bgRgb = hexToRgb(bgHex);
-  const bgLum = relLuminanceRgb(bgRgb.r, bgRgb.g, bgRgb.b);
-  const out = new Uint8Array(data);
-  let changed = false;
+  const out = await convertDarkSurfaceWordmarkClustered(
+    data,
+    w,
+    hPx,
+    wordmarkStartX,
+    bgHex
+  );
 
-  for (let y = 0; y < hPx; y++) {
-    for (let x = wordmarkStartX; x < w; x++) {
-      const idx = (y * w + x) * 4;
-      const a = out[idx + 3];
-      if (a < 10) continue;
-      const r = out[idx];
-      const g = out[idx + 1];
-      const b = out[idx + 2];
-      const lum = relLuminanceRgb(r, g, b);
-      const contrast = (Math.max(lum, bgLum) + 0.05) / (Math.min(lum, bgLum) + 0.05);
-      const hsl = rgbToHsl({ r, g, b });
-      if (contrast < 4.5 || hsl.l < 58) {
-        out[idx] = 250;
-        out[idx + 1] = 248;
-        out[idx + 2] = 245;
-        changed = true;
-      }
-    }
-  }
-
-  if (!changed) return pngBuffer;
   return sharp(Buffer.from(out.buffer), {
     raw: { width: w, height: hPx, channels: 4 },
   })
@@ -659,6 +820,8 @@ async function prepareFittedLogoElement(params: {
   processedPng: Buffer;
   whiteLogoPng: Buffer;
   contrastBgHex?: string;
+  vectorizedSvg?: string;
+  negativeSvg?: string;
   targetHeight: number;
   maxWidth: number;
   maxHeight: number;
@@ -668,19 +831,32 @@ async function prepareFittedLogoElement(params: {
   aspectRatio: number;
   element: React.ReactElement;
 }> {
-  const chosenRaw = params.isDarkBg ? params.whiteLogoPng : params.processedPng;
-  const trimmed = await trimLogoWithRatio(chosenRaw);
-  const finalBuffer =
-    params.isDarkBg && params.contrastBgHex
-      ? await ensureWordmarkContrastOnDarkBg(trimmed.buffer, params.contrastBgHex)
-      : trimmed.buffer;
+  let chosenBuf: Buffer;
+  if (params.vectorizedSvg) {
+    const surface = params.contrastBgHex || (params.isDarkBg ? "#1E100A" : "#FAF6F0");
+    const svgSrc =
+      params.isDarkBg && params.negativeSvg ? params.negativeSvg : params.vectorizedSvg;
+    const adaptedSvg = adaptVectorSvgForSurface(svgSrc, surface);
+    chosenBuf = Buffer.from(
+      new Resvg(adaptedSvg, { fitTo: { mode: "width", value: 900 } }).render().asPng()
+    );
+  } else {
+    const chosenRaw = params.isDarkBg ? params.whiteLogoPng : params.processedPng;
+    const preTrim = await trimLogoWithRatio(chosenRaw);
+    chosenBuf =
+      params.isDarkBg && params.contrastBgHex
+        ? await ensureWordmarkContrastOnDarkBg(preTrim.buffer, params.contrastBgHex)
+        : preTrim.buffer;
+  }
+
+  const trimmed = await trimLogoWithRatio(chosenBuf);
   let drawH = Math.min(params.maxHeight, Math.max(24, params.targetHeight));
   let drawW = Math.round(drawH * trimmed.aspectRatio);
   if (drawW > params.maxWidth) {
     drawW = params.maxWidth;
     drawH = Math.max(18, Math.round(drawW / trimmed.aspectRatio));
   }
-  const src = `data:image/png;base64,${finalBuffer.toString("base64")}`;
+  const src = `data:image/png;base64,${trimmed.buffer.toString("base64")}`;
   return {
     width: drawW,
     height: drawH,
@@ -706,505 +882,34 @@ export async function renderCoverPiece(params: {
   whiteLogoPng: Buffer;
   isDarkMonochrome: boolean;
   photoBuffer?: Buffer;
+  coverLayoutId?: CoverLayoutId;
+  cutoutBuffer?: Buffer;
+  vectorizedSvg?: string;
+  negativeSvg?: string;
+  logoDna?: LogoVisualDna;
+  sessaoId?: string;
 }): Promise<Buffer> {
-  const {
-    id,
-    width,
-    height,
-    style,
-    dados,
-    paleta,
-    fontPairId,
-    processedPng,
-    whiteLogoPng,
-    photoBuffer,
-  } = params;
-
-  const bgPng = await renderStyleBackgroundBuffer({
-    width,
-    height,
-    style,
-    paleta,
-    photoBuffer,
+  const layoutId =
+    params.coverLayoutId || getDefaultCoverLayoutIdForStyle(params.style);
+  const res = await renderLayeredCover({
+    coverFormatId: params.id,
+    width: params.width,
+    height: params.height,
+    layoutId,
+    dados: params.dados,
+    paleta: params.paleta,
+    fontPairId: params.fontPairId,
+    processedPng: params.processedPng,
+    whiteLogoPng: params.whiteLogoPng,
+    vectorizedSvg: params.vectorizedSvg,
+    negativeSvg: params.negativeSvg,
+    logoDna: params.logoDna,
+    estiloPeca: params.style,
+    photoBuffer: params.photoBuffer,
+    cutoutBuffer: params.cutoutBuffer,
+    sessaoId: params.sessaoId,
   });
-
-  const theme = getStyleThemeColors(style, paleta);
-  const { pair, fonts } = getSatoriFontsForPair(fontPairId);
-
-  const isYoutubeBanner = id === "yt-banner";
-  const hasBottomLeftAvatar =
-    id === "fb-capa" ||
-    id === "x-cabecalho" ||
-    id === "li-capa-pessoal" ||
-    id === "li-capa-empresa";
-
-  const safeW = isYoutubeBanner ? 1544 : width;
-  const safeH = isYoutubeBanner ? 423 : height;
-
-  const leftPad = isYoutubeBanner
-    ? 56
-    : hasBottomLeftAvatar
-    ? Math.round(width * 0.21)
-    : Math.round(width * 0.06);
-  const rightPad = isYoutubeBanner ? 56 : Math.round(width * 0.055);
-  const topPad = isYoutubeBanner ? 24 : Math.round(safeH * 0.08);
-  const botPad = isYoutubeBanner
-    ? 24
-    : Math.round(safeH * (style === "padrao" || style === "informativo" || style === "liso" ? 0.11 : 0.08));
-
-  const usableW = Math.max(240, safeW - leftPad - rightPad);
-  const usableH = Math.max(120, safeH - topPad - botPad);
-
-  const scale = isYoutubeBanner ? 0.96 : Math.min(safeW / 1000, safeH / 320);
-  const titleSize = Math.max(24, Math.min(72, Math.round(44 * scale)));
-  const sloganSize = Math.max(15, Math.min(34, Math.round(21 * scale)));
-  const metaSize = Math.max(13, Math.min(22, Math.round(15 * scale)));
-
-  const logoHasName = !dados.simbolo;
-  const srvText = (dados.servicos || "").trim() || SECTORS[dados.sector]?.rotulo || "";
-  const telText = (dados.telefone || "").trim();
-  const webText = (dados.website || "").trim().replace(/^https?:\/\//, "");
-  const addrText = (dados.morada || "").trim();
-  const hasInfoText = Boolean(srvText || telText || webText || addrText);
-
-  let innerContent: React.ReactElement;
-
-  if (style === "minimal") {
-    // Minimal tipográfico: foca exclusivamente na tipografia com muito espaço negativo
-    innerContent = h(
-      "div",
-      {
-        style: {
-          width: isYoutubeBanner ? "1544px" : "100%",
-          height: isYoutubeBanner ? "423px" : "100%",
-          boxSizing: "border-box",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: `${topPad}px ${Math.round(safeW * 0.08)}px ${botPad}px ${hasBottomLeftAvatar ? leftPad : Math.round(safeW * 0.08)}px`,
-        },
-      },
-      h(
-        "div",
-        {
-          style: {
-            fontFamily: pair.tituloFamily,
-            fontWeight: pair.tituloWeight,
-            fontSize: `${Math.round(titleSize * 1.18)}px`,
-            color: theme.textColor,
-            lineHeight: 1.06,
-            textAlign: "center",
-          },
-        },
-        dados.nome
-      ),
-      dados.slogan
-        ? h(
-            "div",
-            {
-              style: {
-                fontFamily: pair.textoFamily,
-                fontWeight: 400,
-                fontSize: `${sloganSize}px`,
-                color: theme.mutedTextColor,
-                marginTop: "10px",
-                textAlign: "center",
-              },
-            },
-            dados.slogan
-          )
-        : null
-    );
-  } else if (logoHasName) {
-    // O logótipo já contém o nome: nunca duplicar dados.nome nem envolver em caixas brancas.
-    // Garantir >= 38%–48% da altura da capa (e ~52% da zona segura no banner YouTube).
-    if (style === "informativo" && hasInfoText) {
-      // Primeiro tentamos medir o logótipo a 40% da altura da capa para ver se os contactos cabem ao lado
-      const minCoverH = Math.ceil(safeH * 0.38);
-      const probeSideLogo = await prepareFittedLogoElement({
-        isDarkBg: theme.isDarkBg,
-        processedPng,
-        whiteLogoPng,
-        targetHeight: Math.round(safeH * 0.43),
-        maxWidth: usableW,
-        maxHeight: usableH,
-      });
-
-      const canPlaceSideBySide = usableW - probeSideLogo.width >= 310;
-
-      if (canPlaceSideBySide) {
-        const fittedLogo = await prepareFittedLogoElement({
-          isDarkBg: theme.isDarkBg,
-          processedPng,
-          whiteLogoPng,
-          targetHeight: Math.max(minCoverH, Math.round(safeH * 0.44)),
-          maxWidth: Math.max(220, usableW - 310),
-          maxHeight: usableH,
-        });
-
-        innerContent = h(
-          "div",
-          {
-            style: {
-              width: isYoutubeBanner ? "1544px" : "100%",
-              height: isYoutubeBanner ? "423px" : "100%",
-              boxSizing: "border-box",
-              display: "flex",
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              paddingLeft: `${leftPad}px`,
-              paddingRight: `${rightPad}px`,
-              paddingTop: `${topPad}px`,
-              paddingBottom: `${botPad}px`,
-              gap: "28px",
-            },
-          },
-          fittedLogo.element,
-          h(
-            "div",
-            {
-              style: {
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "flex-end",
-                justifyContent: "center",
-                gap: "10px",
-                maxWidth: "36%",
-              },
-            },
-            srvText
-              ? h(
-                  "div",
-                  {
-                    style: {
-                      fontFamily: pair.tituloFamily,
-                      fontWeight: pair.tituloWeight,
-                      fontSize: `${metaSize}px`,
-                      color: theme.textColor,
-                      backgroundColor: theme.badgeBg,
-                      padding: "7px 14px",
-                      borderRadius: "8px",
-                      textAlign: "right",
-                    },
-                  },
-                  srvText
-                )
-              : null,
-            telText || webText
-              ? h(
-                  "div",
-                  {
-                    style: {
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "flex-end",
-                      fontFamily: pair.textoFamily,
-                      fontWeight: 400,
-                      fontSize: `${Math.max(12, metaSize - 1)}px`,
-                      color: theme.mutedTextColor,
-                      lineHeight: 1.35,
-                    },
-                  },
-                  telText ? h("div", { style: { fontWeight: 600, color: theme.textColor } }, telText) : null,
-                  webText ? h("div", null, webText) : null
-                )
-              : null
-          )
-        );
-      } else {
-        // Capas mais estreitas (ex. Facebook 851x315): logótipo grande (>=38% altura) em cima + faixa de serviços/contactos abaixo
-        const infoStripH = Math.max(40, Math.round(safeH * 0.16));
-        const maxStackedLogoH = Math.max(minCoverH, usableH - infoStripH - 14);
-        const fittedLogo = await prepareFittedLogoElement({
-          isDarkBg: theme.isDarkBg,
-          processedPng,
-          whiteLogoPng,
-          targetHeight: Math.min(maxStackedLogoH, Math.round(safeH * 0.42)),
-          maxWidth: usableW,
-          maxHeight: maxStackedLogoH,
-        });
-
-        innerContent = h(
-          "div",
-          {
-            style: {
-              width: isYoutubeBanner ? "1544px" : "100%",
-              height: isYoutubeBanner ? "423px" : "100%",
-              boxSizing: "border-box",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "flex-start",
-              justifyContent: "space-between",
-              paddingLeft: `${leftPad}px`,
-              paddingRight: `${rightPad}px`,
-              paddingTop: `${topPad + 6}px`,
-              paddingBottom: `${botPad + 4}px`,
-            },
-          },
-          fittedLogo.element,
-          h(
-            "div",
-            {
-              style: {
-                width: "100%",
-                display: "flex",
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "12px",
-                marginTop: "10px",
-              },
-            },
-            srvText
-              ? h(
-                  "div",
-                  {
-                    style: {
-                      fontFamily: pair.tituloFamily,
-                      fontWeight: 400,
-                      fontSize: `${Math.max(12, metaSize - 1)}px`,
-                      color: theme.textColor,
-                      backgroundColor: theme.badgeBg,
-                      padding: "6px 14px",
-                      borderRadius: "7px",
-                    },
-                  },
-                  srvText
-                )
-              : h("div", { style: { display: "flex" } }),
-            telText || webText
-              ? h(
-                  "div",
-                  {
-                    style: {
-                      display: "flex",
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: "12px",
-                      fontFamily: pair.textoFamily,
-                      fontSize: `${Math.max(12, metaSize - 1)}px`,
-                      color: theme.textColor,
-                      backgroundColor: theme.badgeBg,
-                      padding: "6px 14px",
-                      borderRadius: "7px",
-                    },
-                  },
-                  telText ? h("span", { style: { fontWeight: 700 } }, telText) : null,
-                  telText && webText ? h("span", { style: { color: theme.mutedTextColor } }, "•") : null,
-                  webText ? h("span", { style: { color: theme.mutedTextColor } }, webText) : null
-                )
-              : null
-          )
-        );
-      }
-    } else {
-      // Degradê, Padrão, Liso, Fotografia (com nome no logótipo): destaque total ao logótipo nítido >=44% altura!
-      const fittedLogo = await prepareFittedLogoElement({
-        isDarkBg: theme.isDarkBg,
-        processedPng,
-        whiteLogoPng,
-        contrastBgHex: theme.bgRefHex,
-        targetHeight: Math.round(safeH * (isYoutubeBanner ? 0.56 : 0.48)),
-        maxWidth: usableW,
-        maxHeight: Math.round(usableH * 0.86),
-      });
-
-      innerContent = h(
-        "div",
-        {
-          style: {
-            width: isYoutubeBanner ? "1544px" : "100%",
-            height: isYoutubeBanner ? "423px" : "100%",
-            boxSizing: "border-box",
-            display: "flex",
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            paddingLeft: `${leftPad}px`,
-            paddingRight: `${rightPad}px`,
-            paddingTop: `${topPad}px`,
-            paddingBottom: `${botPad}px`,
-          },
-        },
-        fittedLogo.element
-      );
-    }
-  } else {
-    // O logótipo é APENAS UM SÍMBOLO (dados.simbolo === true): compõe o símbolo grande (>=44% altura) + nome da marca ao lado
-    const fittedSymbol = await prepareFittedLogoElement({
-      isDarkBg: theme.isDarkBg,
-      processedPng,
-      whiteLogoPng,
-      contrastBgHex: theme.bgRefHex,
-      targetHeight: Math.round(safeH * (isYoutubeBanner ? 0.54 : 0.48)),
-      maxWidth: Math.round(usableW * 0.34),
-      maxHeight: Math.round(usableH * 0.84),
-    });
-
-    innerContent = h(
-      "div",
-      {
-        style: {
-          width: isYoutubeBanner ? "1544px" : "100%",
-          height: isYoutubeBanner ? "423px" : "100%",
-          boxSizing: "border-box",
-          display: "flex",
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          paddingLeft: `${leftPad}px`,
-          paddingRight: `${rightPad}px`,
-          paddingTop: `${topPad}px`,
-          paddingBottom: `${botPad}px`,
-          gap: `${Math.max(18, Math.round(28 * scale))}px`,
-        },
-      },
-      h(
-        "div",
-        {
-          style: {
-            display: "flex",
-            flexDirection: "row",
-            alignItems: "center",
-            gap: `${Math.max(18, Math.round(28 * scale))}px`,
-            maxWidth: style === "informativo" ? "66%" : "96%",
-          },
-        },
-        fittedSymbol.element,
-        h(
-          "div",
-          {
-            style: {
-              display: "flex",
-              flexDirection: "column",
-              justifyContent: "center",
-            },
-          },
-          h(
-            "div",
-            {
-              style: {
-                fontFamily: pair.tituloFamily,
-                fontWeight: pair.tituloWeight,
-                fontSize: `${titleSize}px`,
-                color: theme.textColor,
-                lineHeight: 1.08,
-              },
-            },
-            dados.nome
-          ),
-          dados.slogan
-            ? h(
-                "div",
-                {
-                  style: {
-                    fontFamily: pair.textoFamily,
-                    fontWeight: 400,
-                    fontSize: `${sloganSize}px`,
-                    color: theme.mutedTextColor,
-                    marginTop: "6px",
-                  },
-                },
-                dados.slogan
-              )
-            : null,
-          style === "informativo" && srvText && safeH >= 280
-            ? h(
-                "div",
-                {
-                  style: {
-                    fontFamily: pair.tituloFamily,
-                    fontWeight: 400,
-                    fontSize: `${metaSize}px`,
-                    color: theme.textColor,
-                    marginTop: "10px",
-                    backgroundColor: theme.badgeBg,
-                    padding: "5px 12px",
-                    borderRadius: "6px",
-                  },
-                },
-                srvText
-              )
-            : null
-        )
-      ),
-      style === "informativo" && (telText || webText)
-        ? h(
-            "div",
-            {
-              style: {
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "flex-end",
-                justifyContent: "center",
-                backgroundColor: theme.badgeBg,
-                padding: "12px 18px",
-                borderRadius: "10px",
-                maxWidth: "32%",
-              },
-            },
-            telText
-              ? h(
-                  "div",
-                  {
-                    style: {
-                      fontFamily: pair.tituloFamily,
-                      fontWeight: pair.tituloWeight,
-                      fontSize: `${metaSize}px`,
-                      color: theme.textColor,
-                    },
-                  },
-                  telText
-                )
-              : null,
-            webText
-              ? h(
-                  "div",
-                  {
-                    style: {
-                      fontFamily: pair.textoFamily,
-                      fontWeight: 400,
-                      fontSize: `${Math.max(11, metaSize - 2)}px`,
-                      color: theme.mutedTextColor,
-                      marginTop: "4px",
-                    },
-                  },
-                  webText
-                )
-              : null
-          )
-        : null
-    );
-  }
-
-  const rootElement = isYoutubeBanner
-    ? h(
-        "div",
-        {
-          style: {
-            width: "100%",
-            height: "100%",
-            boxSizing: "border-box",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          },
-        },
-        innerContent
-      )
-    : innerContent;
-
-  const fgSvg = await satori(rootElement, { width, height, fonts });
-  const fgPng = Buffer.from(
-    new Resvg(fgSvg, { fitTo: { mode: "width", value: width } }).render().asPng()
-  );
-
-  return sharp(bgPng)
-    .composite([{ input: fgPng, top: 0, left: 0 }])
-    .png()
-    .toBuffer();
+  return res.buffer;
 }
 
 export async function renderInstagramPost(params: {
@@ -1216,6 +921,10 @@ export async function renderInstagramPost(params: {
   whiteLogoPng: Buffer;
   isDarkMonochrome: boolean;
   photoBuffer?: Buffer;
+  vectorizedSvg?: string;
+  negativeSvg?: string;
+  logoDna?: LogoVisualDna;
+  sessaoId?: string;
 }): Promise<Buffer> {
   const width = 1080;
   const height = 1080;
@@ -1227,19 +936,93 @@ export async function renderInstagramPost(params: {
     processedPng,
     whiteLogoPng,
     photoBuffer,
+    vectorizedSvg,
+    negativeSvg,
+    logoDna,
+    sessaoId,
   } = params;
 
-  const bgPng = await renderStyleBackgroundBuffer({
-    width,
-    height,
-    style,
-    paleta,
-    photoBuffer,
-  });
+  let bgPng: Buffer;
+  if (style === "fotografia" && photoBuffer && photoBuffer.length > 0) {
+    bgPng = await renderStyleBackgroundBuffer({
+      width,
+      height,
+      style,
+      paleta,
+      photoBuffer,
+    });
+  } else {
+    const art = await gerarArtePublicacaoDaMarca({
+      tipo: "publicacao-instagram",
+      nome: dados.nome,
+      sector: dados.sector,
+      paleta,
+      estiloPeca: style,
+      logotipoReferencia: processedPng,
+      logotipoDna: logoDna,
+      sessaoId,
+    });
+    bgPng = await sharp(art.buffer)
+      .resize(width, height, { fit: "cover", position: "centre" })
+      .png()
+      .toBuffer();
+  }
 
-  const theme = getStyleThemeColors(style, paleta);
+  // Amostra luminosidade real da zona superior (logótipo) e centro-esquerdo (textos reais)
+  const logoSurface = await sampleSurfaceRectHex(bgPng, width, height, 84, 84, 480, 180);
+  const textSurface = await sampleSurfaceRectHex(bgPng, width, height, 84, 290, 740, 440);
+  const footSurface = await sampleSurfaceRectHex(bgPng, width, height, 84, 820, 620, 140);
+
+  const isLogoDarkBg = relativeLuminance(logoSurface.avgHex) < 0.28;
+  const isTextDarkBg = relativeLuminance(textSurface.avgHex) < 0.3;
+
+  const headlineColor = pickWcagHexOnSurface(
+    isTextDarkBg ? "#FAF8F5" : paleta.tinta.hex,
+    textSurface.avgHex,
+    4.6
+  );
+  const mutedColor = pickWcagHexOnSurface(
+    isTextDarkBg ? "#F4DEC0" : mixHex(paleta.tinta.hex, paleta.neutro.hex, 0.28),
+    textSurface.avgHex,
+    4.5
+  );
+  const pillBg = isLogoDarkBg
+    ? "rgba(250, 248, 245, 0.16)"
+    : mixHex(paleta.primaria.hex, "#FFFFFF", 0.85);
+  const pillText = isLogoDarkBg
+    ? "#FAF8F5"
+    : pickWcagHexOnSurface(paleta.tinta.hex, mixHex(paleta.primaria.hex, "#FFFFFF", 0.85), 4.6);
+  const footerText = pickWcagHexOnSurface(
+    relativeLuminance(footSurface.avgHex) < 0.3 ? "#FAF8F5" : paleta.tinta.hex,
+    footSurface.avgHex,
+    4.5
+  );
+
+  // Véu localizado discreto apenas se o pior píxel sob o texto falhar contraste
+  const worstLum = isTextDarkBg ? textSurface.maxLum : textSurface.minLum;
+  const txtLum = relativeLuminance(headlineColor);
+  const worstRatio = (Math.max(txtLum, worstLum) + 0.05) / (Math.min(txtLum, worstLum) + 0.05);
+  if (worstRatio < 4.5) {
+    const scrimHex = isTextDarkBg ? paleta.tinta.hex : paleta.papel.hex;
+    const scrimRgb = hexToRgb(scrimHex);
+    const veilSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+      <rect x="64" y="290" width="690" height="440" rx="22" fill="rgb(${scrimRgb.r},${scrimRgb.g},${scrimRgb.b})" fill-opacity="0.72" />
+    </svg>`;
+    bgPng = await sharp(bgPng)
+      .composite([
+        {
+          input: Buffer.from(
+            new Resvg(veilSvg, { fitTo: { mode: "width", value: width } }).render().asPng()
+          ),
+          left: 0,
+          top: 0,
+        },
+      ])
+      .png()
+      .toBuffer();
+  }
+
   const { pair, fonts } = getSatoriFontsForPair(fontPairId);
-
   const servicosList = (dados.servicos || "")
     .split(/[,;•]+/)
     .map((s) => s.trim())
@@ -1247,14 +1030,23 @@ export async function renderInstagramPost(params: {
     .slice(0, 4);
 
   const fittedPostLogo = await prepareFittedLogoElement({
-    isDarkBg: theme.isDarkBg,
+    isDarkBg: isLogoDarkBg,
     processedPng,
     whiteLogoPng,
-    contrastBgHex: theme.bgRefHex,
-    targetHeight: style === "minimal" ? 105 : 132,
-    maxWidth: style === "minimal" ? 360 : 480,
-    maxHeight: style === "minimal" ? 115 : 150,
+    contrastBgHex: logoSurface.avgHex,
+    vectorizedSvg,
+    negativeSvg,
+    targetHeight: style === "minimal" ? 115 : 142,
+    maxWidth: 480,
+    maxHeight: 165,
   });
+
+  // Se o logótipo já contém o nome (dados.simbolo=false) e existe slogan, destaca o slogan em grande sem repetir o nome
+  const hasSeparateHeadline = Boolean(dados.simbolo) || !dados.slogan?.trim();
+  const mainHeadline = hasSeparateHeadline ? dados.nome : dados.slogan;
+  const secondaryLine = hasSeparateHeadline ? (dados.slogan || "").trim() : "";
+  const footerLeft = (dados.website || dados.email || "").trim().replace(/^https?:\/\//i, "");
+  const footerRight = (dados.telefone || dados.morada || "").trim();
 
   const element = h(
     "div",
@@ -1281,62 +1073,66 @@ export async function renderInstagramPost(params: {
         },
       },
       fittedPostLogo.element,
-      h(
-        "div",
-        {
-          style: {
-            fontFamily: pair.tituloFamily,
-            fontWeight: 400,
-            fontSize: "22px",
-            color: theme.badgeText,
-            backgroundColor: theme.badgeBg,
-            padding: "10px 22px",
-            borderRadius: "999px",
-          },
-        },
-        SECTORS[dados.sector]?.rotulo || "Apresentação"
-      )
+      (dados.morada || "").trim()
+        ? h(
+            "div",
+            {
+              style: {
+                fontFamily: pair.tituloFamily,
+                fontWeight: 600,
+                fontSize: "22px",
+                color: pillText,
+                backgroundColor: pillBg,
+                padding: "10px 22px",
+                borderRadius: "999px",
+              },
+            },
+            dados.morada.trim()
+          )
+        : null
     ),
     h(
       "div",
       {
         style: {
-          width: "100%",
+          width: "74%",
           display: "flex",
           flexDirection: "column",
           justifyContent: "center",
-          marginTop: "24px",
+          marginTop: "12px",
           marginBottom: "24px",
         },
       },
-      h(
-        "div",
-        {
-          style: {
-            fontFamily: pair.tituloFamily,
-            fontWeight: pair.tituloWeight,
-            fontSize: dados.nome.length > 20 ? "72px" : "86px",
-            color: theme.textColor,
-            lineHeight: 1.06,
-            letterSpacing: "-0.02em",
-          },
-        },
-        dados.nome
-      ),
-      dados.slogan
+      mainHeadline
+        ? h(
+            "div",
+            {
+              style: {
+                fontFamily: pair.tituloFamily,
+                fontWeight: pair.tituloWeight,
+                fontSize: mainHeadline.length > 26 ? "62px" : "76px",
+                color: headlineColor,
+                lineHeight: 1.08,
+                letterSpacing: "-0.02em",
+              },
+            },
+            mainHeadline
+          )
+        : null,
+      secondaryLine
         ? h(
             "div",
             {
               style: {
                 fontFamily: pair.textoFamily,
                 fontWeight: 400,
-                fontSize: "36px",
-                color: theme.mutedTextColor,
+                fontSize: "34px",
+                color: mutedColor,
                 marginTop: "22px",
-                lineHeight: 1.35,
+                lineHeight: 1.32,
               },
             },
-            dados.slogan
+            secondaryLine
           )
         : null,
       style === "informativo" && servicosList.length > 0
@@ -1348,7 +1144,7 @@ export async function renderInstagramPost(params: {
                 flexDirection: "row",
                 flexWrap: "wrap",
                 gap: "14px",
-                marginTop: "36px",
+                marginTop: "32px",
               },
             },
             ...servicosList.map((srv, idx) =>
@@ -1360,8 +1156,8 @@ export async function renderInstagramPost(params: {
                     fontFamily: pair.tituloFamily,
                     fontWeight: pair.tituloWeight,
                     fontSize: "24px",
-                    color: theme.textColor,
-                    backgroundColor: theme.badgeBg,
+                    color: pillText,
+                    backgroundColor: pillBg,
                     padding: "12px 22px",
                     borderRadius: "10px",
                   },
@@ -1370,60 +1166,66 @@ export async function renderInstagramPost(params: {
               )
             )
           )
-        : dados.servicos && style !== "minimal"
+        : dados.servicos?.trim() && style !== "minimal"
         ? h(
             "div",
             {
               style: {
                 fontFamily: pair.tituloFamily,
-                fontWeight: 400,
+                fontWeight: 600,
                 fontSize: "26px",
-                color: theme.textColor,
-                marginTop: "28px",
+                color: isTextDarkBg ? "#F4B858" : paleta.primaria.hex,
+                marginTop: "26px",
               },
             },
-            dados.servicos
+            dados.servicos.trim()
           )
         : null
     ),
-    h(
-      "div",
-      {
-        style: {
-          width: "100%",
-          display: "flex",
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          borderTop: `2px solid ${theme.badgeBg}`,
-          paddingTop: "28px",
-        },
-      },
-      h(
-        "div",
-        {
-          style: {
-            fontFamily: pair.tituloFamily,
-            fontWeight: pair.tituloWeight,
-            fontSize: "24px",
-            color: theme.textColor,
+    footerLeft || footerRight
+      ? h(
+          "div",
+          {
+            style: {
+              width: "66%",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              borderTop: `2px solid ${isTextDarkBg ? "rgba(250,248,245,0.22)" : "rgba(42,24,16,0.16)"}`,
+              paddingTop: "22px",
+              gap: "6px",
+            },
           },
-        },
-        (dados.website || dados.email || "").replace(/^https?:\/\//, "")
-      ),
-      h(
-        "div",
-        {
-          style: {
-            fontFamily: pair.textoFamily,
-            fontWeight: 400,
-            fontSize: "22px",
-            color: theme.mutedTextColor,
-          },
-        },
-        dados.telefone || dados.morada || ""
-      )
-    )
+          footerLeft
+            ? h(
+                "div",
+                {
+                  style: {
+                    fontFamily: pair.tituloFamily,
+                    fontWeight: pair.tituloWeight,
+                    fontSize: "24px",
+                    color: footerText,
+                  },
+                },
+                footerLeft
+              )
+            : null,
+          footerRight
+            ? h(
+                "div",
+                {
+                  style: {
+                    fontFamily: pair.textoFamily,
+                    fontWeight: 400,
+                    fontSize: "22px",
+                    color: footerText,
+                  },
+                },
+                footerRight
+              )
+            : null
+        )
+      : null
   );
 
   const fgSvg = await satori(element, { width, height, fonts });
@@ -1446,6 +1248,10 @@ export async function renderInstagramStory(params: {
   whiteLogoPng: Buffer;
   isDarkMonochrome: boolean;
   photoBuffer?: Buffer;
+  vectorizedSvg?: string;
+  negativeSvg?: string;
+  logoDna?: LogoVisualDna;
+  sessaoId?: string;
 }): Promise<Buffer> {
   const width = 1080;
   const height = 1920;
@@ -1457,28 +1263,84 @@ export async function renderInstagramStory(params: {
     processedPng,
     whiteLogoPng,
     photoBuffer,
+    vectorizedSvg,
+    negativeSvg,
+    logoDna,
+    sessaoId,
   } = params;
 
-  const bgPng = await renderStyleBackgroundBuffer({
-    width,
-    height,
-    style,
-    paleta,
-    photoBuffer,
-  });
+  let bgPng: Buffer;
+  if (style === "fotografia" && photoBuffer && photoBuffer.length > 0) {
+    bgPng = await renderStyleBackgroundBuffer({
+      width,
+      height,
+      style,
+      paleta,
+      photoBuffer,
+    });
+  } else {
+    const art = await gerarArtePublicacaoDaMarca({
+      tipo: "story-instagram",
+      nome: dados.nome,
+      sector: dados.sector,
+      paleta,
+      estiloPeca: style,
+      logotipoReferencia: processedPng,
+      logotipoDna: logoDna,
+      sessaoId,
+    });
+    bgPng = await sharp(art.buffer)
+      .resize(width, height, { fit: "cover", position: "centre" })
+      .png()
+      .toBuffer();
+  }
 
-  const theme = getStyleThemeColors(style, paleta);
+  const logoSurface = await sampleSurfaceRectHex(bgPng, width, height, 92, 290, 560, 210);
+  const textSurface = await sampleSurfaceRectHex(bgPng, width, height, 92, 650, 740, 520);
+  const footSurface = await sampleSurfaceRectHex(bgPng, width, height, 92, 1340, 580, 220);
+
+  const isLogoDarkBg = relativeLuminance(logoSurface.avgHex) < 0.28;
+  const isTextDarkBg = relativeLuminance(textSurface.avgHex) < 0.3;
+
+  const headlineColor = pickWcagHexOnSurface(
+    isTextDarkBg ? "#FAF8F5" : paleta.tinta.hex,
+    textSurface.avgHex,
+    4.6
+  );
+  const mutedColor = pickWcagHexOnSurface(
+    isTextDarkBg ? "#F4DEC0" : mixHex(paleta.tinta.hex, paleta.neutro.hex, 0.28),
+    textSurface.avgHex,
+    4.5
+  );
+  const badgeBg = isTextDarkBg
+    ? "rgba(250, 248, 245, 0.14)"
+    : mixHex(paleta.primaria.hex, "#FFFFFF", 0.85);
+  const badgeText = isTextDarkBg
+    ? "#F4B858"
+    : pickWcagHexOnSurface(paleta.tinta.hex, mixHex(paleta.primaria.hex, "#FFFFFF", 0.85), 4.5);
+  const footColor = pickWcagHexOnSurface(
+    relativeLuminance(footSurface.avgHex) < 0.3 ? "#FAF8F5" : paleta.tinta.hex,
+    footSurface.avgHex,
+    4.5
+  );
+
   const { pair, fonts } = getSatoriFontsForPair(fontPairId);
 
   const fittedStoryLogo = await prepareFittedLogoElement({
-    isDarkBg: theme.isDarkBg,
+    isDarkBg: isLogoDarkBg,
     processedPng,
     whiteLogoPng,
-    contrastBgHex: theme.bgRefHex,
-    targetHeight: 165,
-    maxWidth: 600,
-    maxHeight: 185,
+    contrastBgHex: logoSurface.avgHex,
+    vectorizedSvg,
+    negativeSvg,
+    targetHeight: 175,
+    maxWidth: 620,
+    maxHeight: 205,
   });
+
+  const hasSeparateHeadline = Boolean(dados.simbolo) || !dados.slogan?.trim();
+  const mainHeadline = hasSeparateHeadline ? dados.nome : dados.slogan;
+  const secondaryLine = hasSeparateHeadline ? (dados.slogan || "").trim() : "";
 
   const element = h(
     "div",
@@ -1490,7 +1352,7 @@ export async function renderInstagramStory(params: {
         display: "flex",
         flexDirection: "column",
         justifyContent: "space-between",
-        paddingTop: "300px",
+        paddingTop: "290px",
         paddingBottom: "320px",
         paddingLeft: "92px",
         paddingRight: "92px",
@@ -1511,102 +1373,107 @@ export async function renderInstagramStory(params: {
       "div",
       {
         style: {
-          width: "100%",
+          width: "86%",
           display: "flex",
           flexDirection: "column",
           justifyContent: "center",
         },
       },
-      h(
-        "div",
-        {
-          style: {
-            fontFamily: pair.tituloFamily,
-            fontWeight: pair.tituloWeight,
-            fontSize: dados.nome.length > 20 ? "82px" : "96px",
-            color: theme.textColor,
-            lineHeight: 1.06,
-            letterSpacing: "-0.02em",
-          },
-        },
-        dados.nome
-      ),
-      dados.slogan
-        ? h(
-            "div",
-            {
-              style: {
-                fontFamily: pair.textoFamily,
-                fontWeight: 400,
-                fontSize: "42px",
-                color: theme.mutedTextColor,
-                marginTop: "28px",
-                lineHeight: 1.35,
-              },
-            },
-            dados.slogan
-          )
-        : null,
-      dados.servicos && style !== "minimal"
-        ? h(
-            "div",
-            {
-              style: {
-                fontFamily: pair.tituloFamily,
-                fontWeight: 400,
-                fontSize: "30px",
-                color: theme.badgeText,
-                backgroundColor: theme.badgeBg,
-                padding: "18px 28px",
-                borderRadius: "14px",
-                marginTop: "42px",
-              },
-            },
-            dados.servicos
-          )
-        : null
-    ),
-    h(
-      "div",
-      {
-        style: {
-          width: "100%",
-          display: "flex",
-          flexDirection: "column",
-          borderTop: `2px solid ${theme.badgeBg}`,
-          paddingTop: "32px",
-          gap: "8px",
-        },
-      },
-      dados.website
+      mainHeadline
         ? h(
             "div",
             {
               style: {
                 fontFamily: pair.tituloFamily,
                 fontWeight: pair.tituloWeight,
-                fontSize: "30px",
-                color: theme.textColor,
+                fontSize: mainHeadline.length > 24 ? "74px" : "88px",
+                color: headlineColor,
+                lineHeight: 1.08,
+                letterSpacing: "-0.02em",
               },
             },
-            dados.website.replace(/^https?:\/\//, "")
+            mainHeadline
           )
         : null,
-      dados.morada || dados.telefone
+      secondaryLine
         ? h(
             "div",
             {
               style: {
                 fontFamily: pair.textoFamily,
                 fontWeight: 400,
-                fontSize: "26px",
-                color: theme.mutedTextColor,
+                fontSize: "40px",
+                color: mutedColor,
+                marginTop: "26px",
+                lineHeight: 1.32,
               },
             },
-            [dados.telefone, dados.morada].filter(Boolean).join("  •  ")
+            secondaryLine
+          )
+        : null,
+      dados.servicos?.trim() && style !== "minimal"
+        ? h(
+            "div",
+            {
+              style: {
+                fontFamily: pair.tituloFamily,
+                fontWeight: 600,
+                fontSize: "28px",
+                color: badgeText,
+                backgroundColor: badgeBg,
+                padding: "16px 26px",
+                borderRadius: "14px",
+                marginTop: "38px",
+                alignSelf: "flex-start",
+              },
+            },
+            dados.servicos.trim()
           )
         : null
-    )
+    ),
+    dados.website?.trim() || dados.morada?.trim() || dados.telefone?.trim()
+      ? h(
+          "div",
+          {
+            style: {
+              width: "58%",
+              display: "flex",
+              flexDirection: "column",
+              borderTop: `2px solid ${isTextDarkBg ? "rgba(250,248,245,0.22)" : "rgba(42,24,16,0.18)"}`,
+              paddingTop: "28px",
+              gap: "8px",
+            },
+          },
+          dados.website?.trim()
+            ? h(
+                "div",
+                {
+                  style: {
+                    fontFamily: pair.tituloFamily,
+                    fontWeight: pair.tituloWeight,
+                    fontSize: "28px",
+                    color: footColor,
+                  },
+                },
+                dados.website.trim().replace(/^https?:\/\//i, "")
+              )
+            : null,
+          dados.morada?.trim() || dados.telefone?.trim()
+            ? h(
+                "div",
+                {
+                  style: {
+                    fontFamily: pair.textoFamily,
+                    fontWeight: 400,
+                    fontSize: "24px",
+                    color: footColor,
+                  },
+                },
+                [dados.telefone?.trim(), dados.morada?.trim()].filter(Boolean).join("  •  ")
+              )
+            : null
+        )
+      : null
   );
 
   const fgSvg = await satori(element, { width, height, fonts });
@@ -1631,10 +1498,10 @@ export function renderEmailSignatureHtml(params: {
 
   let cardBg = "#FFFFFF";
   let headerBandBg = paleta.primaria.hex;
-  let borderCol = mixHex(paleta.papel.hex, paleta.tinta.hex, 0.18);
-  let nameCol = paleta.tinta.hex;
+  const borderCol = mixHex(paleta.papel.hex, paleta.tinta.hex, 0.18);
+  const nameCol = paleta.tinta.hex;
   let accentCol = paleta.primaria.hex;
-  let textCol = "#334155";
+  const textCol = "#334155";
 
   if (style === "liso" || style === "degrade") {
     cardBg = paleta.papel.hex;
@@ -1694,7 +1561,9 @@ export function renderEmailSignatureHtml(params: {
             </td>
           </tr>
         </table>
-        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%; margin-top: 12px; border-top: 1px solid ${borderCol};">
+        ${
+          dados.telefone || dados.email || websiteClean || dados.morada || nifClean
+            ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%; margin-top: 12px; border-top: 1px solid ${borderCol};">
           <tr>
             <td style="padding-top: 10px; font-size: 12px; color: ${textCol}; line-height: 1.6;">
               ${
@@ -1724,7 +1593,9 @@ export function renderEmailSignatureHtml(params: {
               }
             </td>
           </tr>
-        </table>
+        </table>`
+            : ""
+        }
       </td>
     </tr>
   </table>
@@ -1978,29 +1849,31 @@ export async function renderBusinessCardPdf(params: {
           dados.servicos
         )
       : h("div", { style: { display: "flex" } }),
-    h(
-      "div",
-      {
-        style: {
-          width: "100%",
-          display: "flex",
-          flexDirection: "column",
-          gap: "8px",
-          borderTop: `2px solid ${mixHex(paleta.papel.hex, paleta.tinta.hex, 0.15)}`,
-          paddingTop: "20px",
-          fontFamily: pair.textoFamily,
-          fontSize: "20px",
-          color: paleta.tinta.hex,
-        },
-      },
-      dados.telefone ? h("div", null, `Tel.: ${dados.telefone}`) : null,
-      dados.email ? h("div", null, `Email: ${dados.email}`) : null,
-      dados.website
-        ? h("div", null, `Web: ${dados.website.replace(/^https?:\/\//, "")}`)
-        : null,
-      dados.morada ? h("div", null, dados.morada) : null,
-      dados.nif ? h("div", null, `NIF: ${dados.nif}`) : null
-    )
+    dados.telefone || dados.email || dados.website || dados.morada || dados.nif
+      ? h(
+          "div",
+          {
+            style: {
+              width: "100%",
+              display: "flex",
+              flexDirection: "column",
+              gap: "8px",
+              borderTop: `2px solid ${mixHex(paleta.papel.hex, paleta.tinta.hex, 0.15)}`,
+              paddingTop: "20px",
+              fontFamily: pair.textoFamily,
+              fontSize: "20px",
+              color: paleta.tinta.hex,
+            },
+          },
+          dados.telefone ? h("div", null, `Tel.: ${dados.telefone}`) : null,
+          dados.email ? h("div", null, `Email: ${dados.email}`) : null,
+          dados.website
+            ? h("div", null, `Web: ${dados.website.replace(/^https?:\/\//, "")}`)
+            : null,
+          dados.morada ? h("div", null, dados.morada) : null,
+          dados.nif ? h("div", null, `NIF: ${dados.nif}`) : null
+        )
+      : null
   );
 
   const backSvg = await satori(backEl, { width: pxW, height: pxH, fonts });
@@ -2183,9 +2056,8 @@ export async function renderLetterheadPdf(params: {
     .toBuffer();
 
   const headerB64 = `data:image/png;base64,${headerComposite.toString("base64")}`;
-  const nifText = (dados.nif || "").trim()
-    ? `NIF: ${dados.nif.trim()}`
-    : "NIF: ______________________";
+  const nifClean = (dados.nif || "").trim();
+  const nifText = nifClean ? `NIF: ${nifClean}` : "";
 
   const pageEl = h(
     "div",
@@ -2252,31 +2124,37 @@ export async function renderLetterheadPdf(params: {
           dados.nome
         ),
         dados.morada ? h("div", null, dados.morada) : null,
-        h(
-          "div",
-          null,
-          [dados.telefone, dados.email, dados.website]
-            .map((s) => (s || "").trim())
-            .filter(Boolean)
-            .join("  •  ")
-        )
+        [dados.telefone, dados.email, dados.website]
+          .map((s) => (s || "").trim())
+          .filter(Boolean).length > 0
+          ? h(
+              "div",
+              null,
+              [dados.telefone, dados.email, dados.website]
+                .map((s) => (s || "").trim())
+                .filter(Boolean)
+                .join("  •  ")
+            )
+          : null
       ),
-      h(
-        "div",
-        {
-          style: {
-            fontFamily: pair.tituloFamily,
-            fontWeight: pair.tituloWeight,
-            fontSize: "18px",
-            color: paleta.tinta.hex,
-            padding: "8px 16px",
-            border: `1.5px solid ${paleta.neutro.hex}`,
-            borderRadius: "6px",
-            backgroundColor: "#FFFFFF",
-          },
-        },
-        nifText
-      )
+      nifText
+        ? h(
+            "div",
+            {
+              style: {
+                fontFamily: pair.tituloFamily,
+                fontWeight: pair.tituloWeight,
+                fontSize: "18px",
+                color: paleta.tinta.hex,
+                padding: "8px 16px",
+                border: `1.5px solid ${paleta.neutro.hex}`,
+                borderRadius: "6px",
+                backgroundColor: "#FFFFFF",
+              },
+            },
+            nifText
+          )
+        : null
     )
   );
 

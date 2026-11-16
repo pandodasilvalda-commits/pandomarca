@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["sharp", "@resvg/resvg-js"],
+  serverExternalPackages: ["sharp", "@resvg/resvg-js", "@neplex/vectorizer", "potrace"],
   turbopack: {
     rules: {
       "*.css": {

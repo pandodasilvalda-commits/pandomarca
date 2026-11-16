@@ -25,19 +25,27 @@ import {
   renderSquareOnBackground,
 } from "./pieces";
 import { createRandomId, KIT_TTL_MS, KitMeta, saveKit } from "../storage";
+import type { CoverLayoutId } from "../capas/catalog";
+import type { LogoVisualDna } from "../imagem";
 
 export interface GenerateKitInput {
   draftId?: string;
   processedPng: Buffer;
   customIconPng?: Buffer;
   customWhiteLogoPng?: Buffer;
+  vectorizedSvg?: string;
+  negativeSvg?: string;
+  logoDna?: LogoVisualDna;
+  sessaoId?: string;
   isDarkMonochrome: boolean;
   dados: BrandData;
   paleta: BrandPalette;
   fontPairId: FontPairId;
   kitStyle: StyleId;
+  coverLayoutId?: CoverLayoutId;
   styleOverrides?: Partial<StyleGroupOverrides>;
   photoBuffer?: Buffer;
+  cutoutBuffer?: Buffer;
 }
 
 export interface GeneratedKitResult {
@@ -178,13 +186,19 @@ export async function generateFullBrandKit(
     processedPng,
     customIconPng,
     customWhiteLogoPng,
+    vectorizedSvg,
+    negativeSvg,
+    logoDna,
+    sessaoId,
     isDarkMonochrome,
     dados,
     paleta,
     fontPairId,
     kitStyle,
+    coverLayoutId,
     styleOverrides,
     photoBuffer,
+    cutoutBuffer,
   } = input;
 
   if (!dados.nome?.trim()) {
@@ -211,8 +225,9 @@ export async function generateFullBrandKit(
   };
 
   // 1. Variantes do logótipo (5 ficheiros)
-  const whiteLogoPng = await createWhiteKnockoutLogo(processedPng, isDarkMonochrome);
-  const overlayWhiteLogoPng = customWhiteLogoPng || whiteLogoPng;
+  const overlayWhiteLogoPng =
+    customWhiteLogoPng ||
+    (await createWhiteKnockoutLogo(processedPng, isDarkMonochrome));
   const iconePng = await extractIconSquare(processedPng, customIconPng);
   const horizontalPng = await renderHorizontalVariant({
     processedPng,
@@ -231,7 +246,7 @@ export async function generateFullBrandKit(
   });
 
   const fundoEscuroPng = await renderSquareOnBackground({
-    logoPng: whiteLogoPng,
+    logoPng: overlayWhiteLogoPng,
     size: 1200,
     bgHex: paleta.tinta.hex,
     paddingRatio: 0.16,
@@ -290,6 +305,12 @@ export async function generateFullBrandKit(
       whiteLogoPng: overlayWhiteLogoPng,
       isDarkMonochrome,
       photoBuffer,
+      coverLayoutId,
+      cutoutBuffer,
+      vectorizedSvg,
+      negativeSvg,
+      logoDna,
+      sessaoId,
     });
     putZipFile(c.path, buf);
   }
@@ -304,6 +325,10 @@ export async function generateFullBrandKit(
     whiteLogoPng: overlayWhiteLogoPng,
     isDarkMonochrome,
     photoBuffer,
+    vectorizedSvg,
+    negativeSvg,
+    logoDna,
+    sessaoId,
   });
   putZipFile("instagram/publicacao-1080.png", igPostPng);
 
@@ -316,6 +341,10 @@ export async function generateFullBrandKit(
     whiteLogoPng: overlayWhiteLogoPng,
     isDarkMonochrome,
     photoBuffer,
+    vectorizedSvg,
+    negativeSvg,
+    logoDna,
+    sessaoId,
   });
   putZipFile("instagram/story-1080x1920.png", igStoryPng);
 
@@ -473,7 +502,13 @@ export async function generateFullBrandKit(
     paleta,
     fontPairId,
     kitStyle,
+    coverLayoutId,
     styleOverrides: effectiveStyles,
+    coverArtOrigins: {
+      tipo: "nascida-do-logotipo",
+      estiloDirecao: logoDna?.estiloDirecao || effectiveStyles.capas,
+      origemLogo: logoDna?.fixtureLogoOrigem || "logotipo-utilizador",
+    },
     files: Array.from(zipFileMap.keys()),
   };
 

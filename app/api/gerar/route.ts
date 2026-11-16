@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_COOKIE_NAME, verifyEntitlementCookie } from "@/lib/access";
+import { getCoverLayoutById } from "@/lib/capas/catalog";
 import {
   BrandData,
   BrandPaletteHex,
@@ -11,6 +12,7 @@ import {
   StyleGroupOverrides,
   StyleId,
 } from "@/lib/formats";
+import { getImagemConfig } from "@/lib/imagem";
 import { Resvg } from "@resvg/resvg-js";
 import { buildBrandPalette } from "@/lib/palette";
 import { loadDraft } from "@/lib/storage";
@@ -109,6 +111,11 @@ export async function POST(req: NextRequest) {
         ? (body.kitStyle as StyleId)
         : SECTORS[sector].recomendacoes.capas[0];
 
+    const coverLayoutSpec =
+      typeof body.coverLayoutId === "string" && body.coverLayoutId
+        ? getCoverLayoutById(body.coverLayoutId)
+        : null;
+
     const rawOverrides = body.styleOverrides || {};
     const styleOverrides: StyleGroupOverrides = {
       capas:
@@ -137,16 +144,28 @@ export async function POST(req: NextRequest) {
           : kitStyle,
     };
 
-    // Check if any visual group (excluding email signature, which translates to table colors) uses "fotografia"
-    const visualGroupsUsingPhoto = (
-      ["capas", "publicacao", "story", "cartao", "papel"] as const
-    ).some((k) => styleOverrides[k] === "fotografia");
+    const imgCfg = getImagemConfig();
+    const groupsRequiringUpload =
+      imgCfg.modo === "real"
+        ? (["capas", "publicacao", "story", "cartao", "papel"] as const)
+        : (["publicacao", "story", "cartao", "papel"] as const);
+    const visualGroupsUsingPhoto = groupsRequiringUpload.some(
+      (k) => styleOverrides[k] === "fotografia"
+    );
 
     let photoBuffer: Buffer | undefined;
     if (typeof body.photoDataUrl === "string" && body.photoDataUrl.startsWith("data:image/")) {
       const base64Part = body.photoDataUrl.split(",")[1];
       if (base64Part) {
         photoBuffer = Buffer.from(base64Part, "base64");
+      }
+    }
+
+    let cutoutBuffer: Buffer | undefined;
+    if (typeof body.cutoutDataUrl === "string" && body.cutoutDataUrl.startsWith("data:image/")) {
+      const base64Part = body.cutoutDataUrl.split(",")[1];
+      if (base64Part) {
+        cutoutBuffer = Buffer.from(base64Part, "base64");
       }
     }
 
@@ -175,18 +194,30 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const vectorizedSvg =
+      loaded.meta.variantesEntradaA?.horizontalSvg || loaded.meta.vectorizedSvg;
+    const negativeSvg =
+      loaded.meta.variantesEntradaA?.negativoTransparenteSvg ||
+      loaded.meta.negativeSvg;
+
     const result = await generateFullBrandKit({
       draftId: loaded.meta.id,
       processedPng: loaded.processedPng,
       customIconPng: loaded.iconPng,
       customWhiteLogoPng,
+      vectorizedSvg,
+      negativeSvg,
+      logoDna: loaded.meta.logoDna,
+      sessaoId: loaded.meta.sessaoImagemId,
       isDarkMonochrome: loaded.meta.isDarkMonochrome,
       dados,
       paleta,
       fontPairId,
       kitStyle,
+      coverLayoutId: coverLayoutSpec?.id,
       styleOverrides,
       photoBuffer,
+      cutoutBuffer,
     });
 
     return NextResponse.json({
