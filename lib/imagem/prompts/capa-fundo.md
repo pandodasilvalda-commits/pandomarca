@@ -1,13 +1,13 @@
 ---
 id: capa-fundo
-titulo: Capa de Rede Social Nascida do Logótipo (Sem Texto)
+titulo: Peça de Capa Gerada a Partir do Logótipo
 estilo: capa
-permite_texto_no_logotipo: sem_texto_nenhum
+permite_texto_no_logotipo: apenas_dados_reais_cliente
 ---
-Use a IMAGEM DO LOGÓTIPO EM ANEXO (logotipoReferencia) como referência visual obrigatória de partida para criar o fundo completo desta capa de rede social da marca **{{nome}}** ({{sector}}).
-Formas e elementos do logótipo a prolongar naturalmente na cena e composição: **{{formasDoLogotipo}}**.
-Estilo visual e materialidade da marca: **{{estiloDoLogotipo}}**.
-Paleta cromática oficial a respeitar rigorosamente: **{{paleta}}**.
-Direção de layout pedida (**{{layoutNome}}**): {{layoutDirecaoVisual}}.
-Zonas seguras para composição posterior em código: {{zonaSegura}} — manter essa área visualmente limpa, calma e com luminosidade controlada para receber o logótipo vetorizado e os textos reais.
-REGRA ABSOLUTA: SEM TEXTO NENHUM, sem letras, sem números de telefone, sem moradas inventadas, sem duplicar nem colar o nome do logótipo na cena e sem marcas de água. Apenas a composição gráfica/fotográfica coesa nascida do logótipo de referência.
+Use a IMAGEM DO LOGÓTIPO EM ANEXO (logotipoReferencia) como referência visual obrigatória de partida para gerar uma arte final completa da peça **{{plataforma}}** ({{aspectRatio}}) da marca **{{nome}}** ({{sector}}).
+Tom da marca: **{{tom}}** — {{tomDescricao}}.
+Prolongar exatamente o mesmo emblema, tipografia, formas (**{{formasDoLogotipo}}**) e linguagem plástica (**{{estiloDoLogotipo}}**) na paleta exata **{{paleta}}**.
+Direção desta proposta (**{{layoutNome}}**): {{layoutDirecaoVisual}}.
+ZONA SEGURA OBRIGATÓRIA (computador e telemóvel): {{zonaSegura}}. Manter as margens exteriores, cortes laterais de telemóvel e áreas de foto de perfil livres de texto ou elementos críticos.
+Textos exatos fornecidos pelo cliente a apresentar com grafia portuguesa correta (NUNCA inventar telefones, moradas nem slogans não listados):
+{{textosPedidos}}

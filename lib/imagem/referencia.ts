@@ -1,4 +1,8 @@
 import {
+  TOM_DA_MARCA_SPECS,
+  type TomDaMarca,
+} from "../config/redes-sociais";
+import {
   BrandPalette,
   BrandPaletteHex,
   SECTORS,
@@ -15,7 +19,9 @@ function formatPaletteDescription(paletaHex: BrandPaletteHex): string {
   ].join(", ");
 }
 
-function isBrandPalette(paleta: BrandPalette | BrandPaletteHex): paleta is BrandPalette {
+function isBrandPalette(
+  paleta: BrandPalette | BrandPaletteHex
+): paleta is BrandPalette {
   return (
     "primaria" in paleta &&
     typeof paleta.primaria === "object" &&
@@ -25,12 +31,13 @@ function isBrandPalette(paleta: BrandPalette | BrandPaletteHex): paleta is Brand
 }
 
 /**
- * Extrai e normaliza o ADN visual do logótipo escolhido (formas, estilo e paleta)
- * para ser passado como referência direta nos prompts e geradores de capas e publicações.
+ * Extrai e normaliza o ADN visual do logótipo escolhido (formas, tom da marca, estilo e paleta)
+ * para ser passado como referência obrigatória nos pedidos de geração de imagem seguintes.
  */
 export function buildLogoVisualDna(params: {
   nome?: string;
   sector?: SectorId;
+  tom?: TomDaMarca;
   paleta: BrandPalette | BrandPaletteHex;
   estiloDirecao?: "classico" | "moderno" | "editorial";
   fixtureLogoOrigem?: string;
@@ -47,6 +54,10 @@ export function buildLogoVisualDna(params: {
       }
     : params.paleta;
 
+  const tom: TomDaMarca =
+    params.tom && params.tom in TOM_DA_MARCA_SPECS ? params.tom : "tradicional";
+  const tomSpec = TOM_DA_MARCA_SPECS[tom];
+
   const fixture = (params.fixtureLogoOrigem || "").toLowerCase();
   const isModernFixture =
     params.estiloDirecao === "moderno" ||
@@ -61,89 +72,76 @@ export function buildLogoVisualDna(params: {
   const keywords = (params.tresPalavras || "").trim();
 
   if (
-    fixture.includes("logo-classico") ||
-    fixture.includes("logo-ajuste") ||
-    (!isModernFixture &&
-      (fixture ||
-        (params.nome || "").toLowerCase().includes("vilariça") ||
-        (params.nome || "").toLowerCase().includes("vilarica") ||
-        sector === "restauracao"))
+    fixture.includes("logo") &&
+    !isModernFixture &&
+    ((params.nome || "").toLowerCase().includes("vilari") ||
+      !params.nome ||
+      sector === "restauracao")
   ) {
-    const isClassicForno =
-      !fixture ||
-      fixture.includes("classico") ||
-      fixture.includes("ajuste") ||
-      (params.nome || "").toLowerCase().includes("vilari");
-
-    if (isClassicForno && !isModernFixture) {
-      return {
-        estiloDirecao: "classico",
-        formasPrincipais:
-          "arco de forno abobadado tradicional, espiga de trigo central erguida, base horizontal de tijolo refratário, silhueta limpa em três massas",
-        motivosGraficos: [
-          "arco de forno",
-          "espiga de trigo",
-          "terracota",
-          "ocre dourado",
-          "pão artesanal em forno a lenha",
-        ],
-        estiloEstetico:
-          "ofício tradicional português com calor artesanal, gravura geométrica limpa em terracota e ocre sobre papel creme",
-        paletaDescricao: formatPaletteDescription(paletaHex),
-        paletaHex,
-        fixtureLogoOrigem: params.fixtureLogoOrigem || "logo-classico-amostra.png",
-      };
-    }
+    return {
+      estiloDirecao: "classico",
+      tom,
+      formasPrincipais:
+        "emblema abobadado de forno tradicional com espiga de trigo dourada central e tipografia serifada editorial clássica",
+      motivosGraficos: [
+        "arco de forno",
+        "espiga de trigo",
+        "terracota",
+        "ocre dourado",
+        `tom ${tomSpec.nome.toLowerCase()}`,
+      ],
+      estiloEstetico: `${tomSpec.direcaoEstetica} Aplicado com calor artesanal em terracota e ocre sobre creme.`,
+      paletaDescricao: formatPaletteDescription(paletaHex),
+      paletaHex,
+      fixtureLogoOrigem: params.fixtureLogoOrigem || "docs/referencias/ia-aprovada/logo.jpg",
+    };
   }
 
   if (isModernFixture) {
     return {
       estiloDirecao: "moderno",
+      tom,
       formasPrincipais:
-        "monograma geométrico inserido em bloco quadrado de cantos arredondados, filete vertical preciso e barra horizontal dourada",
+        "bloco escuro espresso contrastado com fotografia editorial em arco dourado e emblema minimalista luminoso",
       motivosGraficos: [
-        "monograma geométrico",
-        "bloco quadrado suave",
-        "filete dourado",
-        "linhas arquitetónicas contemporâneas",
+        "arco contemporâneo em camadas",
+        "contraste espresso e dourado",
+        `tom ${tomSpec.nome.toLowerCase()}`,
       ],
-      estiloEstetico:
-        "design contemporâneo limpo e arquitetónico de alto contraste em verde pinheiro e dourado sobre pedra clara",
+      estiloEstetico: `${tomSpec.direcaoEstetica} Composição moderna em camadas com tipografia firme e área fotográfica limpa.`,
       paletaDescricao: formatPaletteDescription(paletaHex),
       paletaHex,
-      fixtureLogoOrigem: params.fixtureLogoOrigem || "logo-moderno-amostra.png",
+      fixtureLogoOrigem: params.fixtureLogoOrigem || "docs/referencias/ia-aprovada/capa-moderna.jpg",
     };
   }
 
-  // Qualquer outro logótipo carregado ou personalizado (Entrada B / outros setores)
   const proporcaoNota =
     params.aspectRatio && params.aspectRatio > 1.4
-      ? "símbolo emblemático equilibrado à esquerda com silhueta limpa"
-      : "marca centrada compacta de formas fechadas";
+      ? "símbolo emblemático equilibrado com silhueta limpa"
+      : "marca compacta centrada com emblema legível a 40 px";
 
   const sectorFormasMap: Record<SectorId, string[]> = {
-    restauracao: ["forma orgânica de mesa e forno", "textura artesanal quente", "detalhe botânico simples"],
-    saude: ["arco suave contínuo", "folha ou escudo orgânico limpo", "luz serena equilibrada"],
-    servicos: ["formas modulares de precisão", "filetes paralelos estruturados", "equilíbrio tipográfico limpo"],
-    comercio: ["selos limpos", "etiqueta dobrada geométrica", "contorno nítido de montra"],
-    tecnologia: ["grelha geométrica nítida", "módulos conectados de precisão", "traço limpo contemporâneo"],
-    beleza: ["arco botânico fluido", "curva contínua orgânica", "pétala minimalista"],
-    construcao: ["geometria estrutural angular", "linhas de prumo e esquadria", "bloco arquitetónico sólido"],
-    educacao: ["livro ou pórtico estilizado", "geometria clara e acessível", "traço aberto estruturado"],
-    outro: ["formas geométricas da silhueta do logótipo", "enquadramento limpo de alto contraste"],
+    restauracao: ["arco quente e mesa artesanal", "luz acolhedora de ofício"],
+    saude: ["arco orgânico limpo", "equilíbrio sereno"],
+    servicos: ["geometria estruturada", "eixos tipográficos nítidos"],
+    comercio: ["selo editorial limpo", "montra equilibrada"],
+    tecnologia: ["grelha geométrica precisa", "contraste contemporâneo"],
+    beleza: ["curva fluida orgânica", "moldura suave"],
+    construcao: ["geometria angular sólida", "proporção arquitetónica"],
+    educacao: ["pórtico claro estruturado", "contraste legível"],
+    outro: ["formas emblemáticas limpas do logótipo", "enquadramento de alto contraste"],
   };
 
-  const motivos = [
-    ...(sectorFormasMap[sector] || sectorFormasMap.outro),
-    ...(keywords ? [keywords] : []),
-    params.isDarkMonochrome ? "gravura monocromática nítida" : "harmonia cromática fiel ao símbolo",
-  ];
-
   return {
-    estiloDirecao: params.estiloDirecao || "editorial",
-    formasPrincipais: `${proporcaoNota}, derivada diretamente do símbolo e traço do logótipo de ${params.nome || sectorLabel}${keywords ? ` (${keywords})` : ""}`,
-    motivosGraficos: motivos,
-    estiloEstetico: `identidade visual coesa para ${sectorLabel} com linguagem plástica idêntica à do logótipo carregado`,
+    estiloDirecao: params.estiloDirecao || (tom === "jovem" || tom === "tecnico" ? "moderno" : "classico"),
+    tom,
+    formasPrincipais: `${proporcaoNota} para ${params.nome || sectorLabel}${keywords ? ` (${keywords})` : ""}`,
+    motivosGraficos: [
+      ...(sectorFormasMap[sector] || sectorFormasMap.outro),
+      `tom ${tomSpec.nome.toLowerCase()}`,
+      params.isDarkMonochrome ? "contraste monocromático nítido" : "paleta fiel ao logótipo",
+    ],
+    estiloEstetico: `${tomSpec.direcaoEstetica} Identidade visual para ${sectorLabel} fiel ao logótipo de referência.`,
     paletaDescricao: formatPaletteDescription(paletaHex),
     paletaHex,
     fixtureLogoOrigem: params.fixtureLogoOrigem,

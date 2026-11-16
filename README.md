@@ -1,6 +1,6 @@
 # PandoMarca — Kit de Identidade Visual e Presença Digital para PME
 
-O **PandoMarca** é um produto da **PandoWeb** (https://pandoweb.pt) que parte de um logótipo (criado de raiz na **Entrada A** ou carregado pelo utilizador na **Entrada B**) e entrega um arquivo ZIP (`pandomarca-{nome-simplificado}.zip`) com **exactamente 36 ficheiros** nas medidas oficiais de redes sociais, favicon, assinatura de email em HTML, estacionário para impressão (cartão de visita europeu 91×61 mm com sangria de 3 mm em duas páginas e papel de carta A4) e guia de marca A4 de uma página.
+O **PandoMarca** é um produto da **PandoWeb** (https://pandoweb.pt) focado em **geração de imagem pura a partir do logótipo aprovado**. Parte de um logótipo gerado de raiz na **Entrada A** ou carregado pelo utilizador na **Entrada B** e entrega um arquivo ZIP (`pandomarca-{nome-simplificado}.zip`) com **exatamente 38 ficheiros**: variantes, 18 peças para redes sociais (Facebook, Instagram 1:1 e 4:5, Instagram Story, LinkedIn pessoal e página, YouTube, X, Google Perfil de Empresa, WhatsApp Business e TikTok), favicon multi-resolução, assinatura de email HTML, cartão de visita 91×61 mm, papel de carta A4 e guia de marca A4.
 
 Toda a interface, documentação e ficheiros gerados estão em **português europeu (pt-PT)**.
 
@@ -37,8 +37,8 @@ O PandoMarca distingue dois direitos de acesso de igual peso funcional:
    KIT_ACCESS_CODE_STANDALONE=kit-individual-demo
    KIT_GATE_SECRET=um-segredo-local
    IMAGEM_MODO=falso
-   IMAGEM_FORNECEDOR=
-   IMAGEM_MODELO=
+   IMAGEM_FORNECEDOR=gemini
+   IMAGEM_MODELO=gemini-nano-banana-2.1
    GEMINI_API_KEY=
    RECRAFT_API_KEY=
    IMAGEM_LIMITE_POR_KIT_EUR=1.5
@@ -50,10 +50,10 @@ O PandoMarca distingue dois direitos de acesso de igual peso funcional:
    - `KIT_ACCESS_CODE_WEBSITE`: código de acesso da oferta do website (`website_bonus`).
    - `KIT_ACCESS_CODE_STANDALONE`: código de acesso do kit individual (`standalone`).
    - `KIT_GATE_SECRET`: segredo HMAC-SHA256 para assinar cookies `HttpOnly` válidos por 12 horas.
-   - `IMAGEM_MODO`: `falso` (por omissão, sem custos; usa amostras locais em `tests/fixtures/`) ou `real`.
-   - `IMAGEM_FORNECEDOR`: fornecedor futuro (`gemini` ou `recraft`).
-   - `IMAGEM_MODELO`: identificador do modelo quando `IMAGEM_MODO=real`.
-   - `GEMINI_API_KEY` / `RECRAFT_API_KEY`: chaves da API (sempre vazias em `.env.example` e sem chamadas ativas nesta fase).
+   - `IMAGEM_MODO`: `falso` (por omissão, sem custos; deriva imagens das referências aprovadas em `docs/referencias/ia-aprovada/` via `sharp`) ou `real`.
+   - `IMAGEM_FORNECEDOR`: `gemini` (por omissão para Nano Banana 2.1) ou `recraft`.
+   - `IMAGEM_MODELO`: `gemini-nano-banana-2.1` (por omissão).
+   - `GEMINI_API_KEY` / `RECRAFT_API_KEY`: chaves da API (sempre vazias em `.env.example` e sem chamadas ativas pagas nesta fase).
    - `IMAGEM_LIMITE_POR_KIT_EUR`, `IMAGEM_MAX_RONDAS`, `IMAGEM_MAX_AJUSTES`: teto de custo por kit (EUR) e limites configuráveis de rondas e ajustes.
 
 4. Servidor local de desenvolvimento (porta `4317`):
@@ -78,11 +78,17 @@ O PandoMarca distingue dois direitos de acesso de igual peso funcional:
 
 ---
 
-## 3. Camada de IA Trocável, Vetorização Local e Capas Nascidas do Logótipo
+## 3. Arquitetura Só-Imagem, Zonas Seguras e Referência Obrigatória
 
-- **Camada encaixável em `lib/imagem/`**: interface unificada (`gerar`, `editar`, `removerFundo`, `vetorizar`), adaptadores estruturais vazios `gemini.ts` e `recraft.ts` (sem chamadas pagas), controlador de custo por kit (`lib/imagem/custo.ts`) com bloqueio acima do limite e prompts em `lib/imagem/prompts/*.md` (logótipos sem slogans nem texto extra; capas/fundos sem texto nenhum). O gerador geométrico (`lib/logo-generator/svg-studio.ts`) permanece disponível como reserva gratuita.
-- **Vetorização local gratuita (`lib/vetorizar.ts`)**: utiliza `@neplex/vectorizer` (`vtracer`) e `potrace` para converter em SVG limpo com redução até 8 cores e tamanho inferior a 200 KB, seguido de ecrã **Confirmar vetor** com comparação Original vs Vetor e pré-visualização dedicada a 32 px (versões clara e escura). Todas as 5 variantes oficiais saem diretamente do vetor confirmado.
-- **Capas e publicações nascidas do logótipo (`lib/capas/` e `lib/imagem/referencia.ts`)**: o prompt de cada capa e publicação Instagram recebe a referência do logótipo escolhido (`logotipoReferencia`), a paleta e o ADN visual (`logotipoDna` — formas, motivos e estilo), compondo em código apenas o logótipo vetorizado adaptado, as zonas seguras por plataforma (YouTube `1544×423`, avatares inferiores à esquerda), contraste WCAG AA e os textos reais do cliente (linhas vazias omitidas). Mantém o catálogo de 6 layouts (3 modernos, 3 clássicos) com propostas 1 Moderna + 1 Clássica.
+- **Configuração central das redes sociais (`lib/config/redes-sociais.ts`)**: reúne num único ficheiro os 18 formatos sociais (data de referência **15 de novembro de 2026**), as proporções nativas `aspectRatioGemini` (`1:1`, `4:5`, `9:16`, `16:9`, `21:9`), as áreas `safeZoneDesktop` e `safeZoneMobile`, as sobreposições de avatar (`avatarOverlapDesktop`), as margens de 250 px nos Stories, a zona segura `1546×423` do YouTube e os 6 tons visuais da marca (`tradicional`, `premium`, `jovem`, `tecnico`, `natural`, `divertido`).
+- **Geração só por imagem (`lib/imagem/` e `lib/imagem/gemini.ts`)**:
+  - `buildNanoBananaRequest` estrutura os pedidos para `gemini-nano-banana-2.1` com inclusão multimodal obrigatória do logótipo escolhido (`inlineData`) em **todas** as peças seguintes (perfis, capas, publicações 1:1 e 4:5, stories).
+  - Na Entrada A, o utilizador gera sempre 2 propostas distintas (Clássica com símbolo vs Moderna) com base nos dados e no **Tom visual da marca**, podendo avançar rondas ou ajustar por instrução.
+  - Todas as fotos de perfil nascem do emblema do logótipo aprovado e são validadas em máscara circular a **40 px**.
+  - Nas peças seguintes geram-se sempre 2 propostas visuais completas (**1 Moderna em camadas + 1 Clássica**), com escolha por vista de computador ou telemóvel.
+- **Corte e auditoria de zonas seguras (`lib/capas/safe-zone.ts`)**: `cropResizeToRedeSpec` corta/redimensiona ao tamanho oficial exato e `validarZonaSegura` assinala `precisaRegeneracao = true` caso detete elementos nas margens de 250 px do Story, fora de `1546×423` no YouTube, sob a foto de perfil, nos cantos circulares ou com baixo contraste a 40 px.
+- **Aviso «Verifique os textos» e regeneração individual**: cada peça guarda `textosPedidos` (exclusivamente dos campos preenchidos pelo cliente) e mostra **«Verifique os textos»** com botão **`Regenerar`** (`POST /api/kits/[id]`), atualizando o PNG e reconstruindo o ZIP.
+- **Vetorização estritamente opcional (`lib/vetorizar.ts`)**: nunca se desenham peças sociais por código ou SVG procedimental; `usarVetorizacaoOpcional` aplica-se exclusivamente a `favicon/*` e `impressao/*` PDF.
 
 ---
 
@@ -90,7 +96,8 @@ O PandoMarca distingue dois direitos de acesso de igual peso funcional:
 
 O botão **Preencher ensaio: Forno da Vilariça** no assistente passo a passo preenche:
 - **Nome**: Forno da Vilariça
-- **Sector**: Restauração e Alimentação
+- **Sector**: Restauração
+- **Tom visual da marca**: Tradicional (editável entre os 6 tons)
 - **Slogan**: «Pão de trigo ao nascer do dia»
 - **Serviços**: «Padaria tradicional • Pão em forno a lenha e broa»
 - **Localidade**: «Rua do Forno 14, 5160-242 Torre de Moncorvo»
@@ -100,9 +107,8 @@ O botão **Preencher ensaio: Forno da Vilariça** no assistente passo a passo pr
 
 ## 5. O que ainda falta antes de abrir em produção
 
-- **Ligação paga de geração de imagem desativada**: a camada unificada em `lib/imagem/` (`gemini.ts` e `recraft.ts`) encontra-se estruturada para ativação futura, mantendo por agora `IMAGEM_MODO=falso` com amostras locais em `tests/fixtures/`, sem chaves nem chamadas externas pagas.
+- **Ligação paga de geração de imagem desativada**: o adaptador `GeminiImagemProvider` (`gemini-nano-banana-2.1`) em `lib/imagem/gemini.ts` encontra-se estruturado com envio multimodal de `inlineData` e proporções nativas, mantendo por agora `IMAGEM_MODO=falso` com derivação via `sharp` a partir de `docs/referencias/ia-aprovada/`, sem chaves nem chamadas externas pagas.
 - **Sem pagamentos nem checkout**: o acesso `standalone` tem **preço a definir**; não existe integração Stripe (cartão, MB Way ou Multibanco) nem fluxo de cobrança nesta versão.
 - **Sem contas de utilizador nem base de dados**: a entrada é feita por validação de códigos de ambiente (`website_bonus` e `standalone`) com cookie `HttpOnly` assinado válido por 12 horas, e os rascunhos/kits são guardados temporariamente em disco local (`/tmp`).
 - **Revisão humana PandoWeb e publicação ativa em aberto**: falta definir o domínio final (por exemplo `marca.pandoweb.pt`), políticas de emissão de códigos por cliente, revisão humana opcional pela equipa PandoWeb e chaves de produção.
-- **Especificação técnica detalhada**: consulte [`docs/SPEC.md`](docs/SPEC.md) para a lista oficial dos 36 formatos com fontes documentadas (data de referência: 15 de novembro de 2026).
-
+- **Especificação técnica detalhada**: consulte [`docs/SPEC.md`](docs/SPEC.md) para a lista oficial dos 38 formatos com fontes documentadas (data de referência: 15 de novembro de 2026).

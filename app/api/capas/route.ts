@@ -1,24 +1,46 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_COOKIE_NAME, verifyEntitlementCookie } from "@/lib/access";
 import {
-  getAllCoverLayouts,
-  getCoverLayoutById,
-  getCoverProposalsPair,
-} from "@/lib/capas/catalog";
-import { renderLayeredCover } from "@/lib/capas/composer";
+  getRedeSocialConfig,
+  isRedeSocialId,
+  TOM_DA_MARCA_SPECS,
+  type RedeSocialId,
+  type TomDaMarca,
+} from "@/lib/config/redes-sociais";
 import {
   BrandData,
   BrandPaletteHex,
-  FONT_PAIRS,
-  FontPairId,
   SECTORS,
   SectorId,
 } from "@/lib/formats";
-import { createWhiteKnockoutLogo } from "@/lib/generate/pieces";
-import { decodeBase64ImageInput } from "@/lib/imagem";
+import {
+  AVISO_VERIFIQUE_TEXTOS_PT,
+  gerarDuasPropostasVisualMarca,
+  gerarPecaRedeSocialComAuditoria,
+  ImagemProviderError,
+  type PecaGeradaIA,
+} from "@/lib/imagem";
 import { buildBrandPalette } from "@/lib/palette";
 import { loadDraft } from "@/lib/storage";
-import { Resvg } from "@resvg/resvg-js";
+
+function serializePeca(p: PecaGeradaIA) {
+  return {
+    id: `${p.redeId}-${p.estiloVisual}`,
+    redeId: p.redeId,
+    estiloVisual: p.estiloVisual,
+    tituloProposta: p.tituloProposta,
+    previewDataUrl: `data:image/png;base64,${p.buffer.toString("base64")}`,
+    width: p.width,
+    height: p.height,
+    origem: p.origem,
+    fixtureNome: p.fixtureNome,
+    aspectRatioGemini: p.aspectRatioGemini,
+    referenciaLogoUsada: p.referenciaLogoUsada,
+    textosPedidos: p.textosPedidos,
+    avisoTextos: p.avisoTextos,
+    audit: p.audit,
+  };
+}
 
 export async function POST(req: NextRequest) {
   const token = req.cookies.get(ACCESS_COOKIE_NAME)?.value;
@@ -28,7 +50,8 @@ export async function POST(req: NextRequest) {
       {
         ok: false,
         code: "unauthorized",
-        error: "Sessão expirada ou não autenticada. Introduza novamente o seu código de acesso.",
+        error:
+          "Sessão expirada ou não autenticada. Introduza novamente o seu código de acesso.",
       },
       { status: 401 }
     );
@@ -44,7 +67,8 @@ export async function POST(req: NextRequest) {
         {
           ok: false,
           code: "expired_draft",
-          error: "O rascunho expirou. Volte a carregar ou confirmar o logótipo.",
+          error:
+            "O rascunho expirou. Volte a carregar ou escolher o logótipo.",
         },
         { status: 410 }
       );
@@ -66,9 +90,16 @@ export async function POST(req: NextRequest) {
         ? (rawDados.sector as SectorId)
         : "restauracao";
 
+    const rawTom = rawDados.tom ?? loaded.meta.tom ?? loaded.meta.logoDna?.tom;
+    const tom: TomDaMarca =
+      typeof rawTom === "string" && rawTom in TOM_DA_MARCA_SPECS
+        ? (rawTom as TomDaMarca)
+        : "tradicional";
+
     const dados: BrandData = {
       nome: String(rawDados.nome || "").trim() || "PandoMarca",
       sector,
+      tom,
       simbolo: Boolean(rawDados.simbolo),
       slogan: String(rawDados.slogan || "").trim(),
       pessoa: String(rawDados.pessoa || "").trim(),
@@ -91,90 +122,57 @@ export async function POST(req: NextRequest) {
         };
     const paleta = buildBrandPalette(rawPaleta);
 
-    const fontPairId: FontPairId =
-      body.fontPairId && body.fontPairId in FONT_PAIRS
-        ? (body.fontPairId as FontPairId)
-        : SECTORS[sector].parSugerido;
+    const redeId: RedeSocialId =
+      typeof body.redeId === "string" && isRedeSocialId(body.redeId)
+        ? body.redeId
+        : "fb-capa";
+    const bypassCache = Boolean(body.regenerar);
 
-    let whiteLogoPng: Buffer | undefined;
-    if (loaded.meta.variantesEntradaA?.negativoTransparenteSvg) {
-      try {
-        whiteLogoPng = Buffer.from(
-          new Resvg(loaded.meta.variantesEntradaA.negativoTransparenteSvg, {
-            fitTo: { mode: "width", value: 1400 },
-          })
-            .render()
-            .asPng()
-        );
-      } catch {
-        whiteLogoPng = undefined;
-      }
+    let pecas: PecaGeradaIA[];
+    if (
+      body.apenasUmEstilo &&
+      (body.estiloVisual === "moderno" || body.estiloVisual === "classico")
+    ) {
+      const unica = await gerarPecaRedeSocialComAuditoria({
+        redeId,
+        estiloVisual: body.estiloVisual,
+        dados,
+        paleta,
+        logotipoReferencia: loaded.processedPng,
+        logotipoDna: loaded.meta.logoDna,
+        sessaoId: loaded.meta.sessaoImagemId,
+        bypassCache: true,
+      });
+      pecas = [unica];
+    } else {
+      pecas = await gerarDuasPropostasVisualMarca({
+        redeId,
+        dados,
+        paleta,
+        logotipoReferencia: loaded.processedPng,
+        logotipoDna: loaded.meta.logoDna,
+        sessaoId: loaded.meta.sessaoImagemId,
+        bypassCache,
+      });
     }
-    if (!whiteLogoPng) {
-      whiteLogoPng = await createWhiteKnockoutLogo(
-        loaded.processedPng,
-        loaded.meta.isDarkMonochrome
-      );
-    }
-
-    let photoBuffer: Buffer | undefined;
-    if (typeof body.photoDataUrl === "string" && body.photoDataUrl.startsWith("data:image/")) {
-      photoBuffer = decodeBase64ImageInput(body.photoDataUrl);
-    }
-
-    const round = Math.max(1, Number(body.round || 1));
-    const pair = getCoverProposalsPair({ round, sector });
-
-    const vectorizedSvg =
-      loaded.meta.variantesEntradaA?.horizontalSvg || loaded.meta.vectorizedSvg;
-    const negativeSvg =
-      loaded.meta.variantesEntradaA?.negativoTransparenteSvg ||
-      loaded.meta.negativeSvg;
-
-    const targets = body.listAll
-      ? getAllCoverLayouts()
-      : typeof body.layoutId === "string" && getCoverLayoutById(body.layoutId)
-      ? [getCoverLayoutById(body.layoutId)!]
-      : pair;
-
-    const rendered = await Promise.all(
-      targets.map(async (spec) => {
-        const res = await renderLayeredCover({
-          coverFormatId: "fb-capa",
-          width: 851,
-          height: 315,
-          layoutId: spec.id,
-          dados,
-          paleta,
-          fontPairId,
-          processedPng: loaded.processedPng,
-          whiteLogoPng,
-          vectorizedSvg,
-          negativeSvg,
-          logoDna: loaded.meta.logoDna,
-          estiloPeca: body.estiloPeca,
-          photoBuffer,
-          sessaoId: loaded.meta.sessaoImagemId,
-        });
-        return {
-          spec,
-          previewDataUrl: `data:image/png;base64,${res.buffer.toString("base64")}`,
-          audit: res.audit,
-        };
-      })
-    );
 
     return NextResponse.json({
       ok: true,
-      round,
-      pairLayoutIds: pair.map((p) => p.id),
-      layouts: rendered,
+      rede: getRedeSocialConfig(redeId),
+      avisoTextos: AVISO_VERIFIQUE_TEXTOS_PT,
+      propostas: pecas.map(serializePeca),
     });
   } catch (err) {
+    if (err instanceof ImagemProviderError) {
+      return NextResponse.json(
+        { ok: false, code: err.code, error: err.message },
+        { status: err.code === "invalid_input" ? 400 : 503 }
+      );
+    }
     const msg =
       err instanceof Error
         ? err.message
-        : "Não foi possível compor as pré-visualizações de capas.";
+        : "Não foi possível gerar as propostas visuais a partir do logótipo.";
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }

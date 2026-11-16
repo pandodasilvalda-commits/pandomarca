@@ -1,10 +1,13 @@
 ---
 id: publicacao-instagram
-titulo: Publicação Instagram 1080x1080 Nascida do Logótipo (Sem Texto)
+titulo: Publicação de Instagram Gerada a Partir do Logótipo
 estilo: publicacao
-permite_texto_no_logotipo: sem_texto_nenhum
+permite_texto_no_logotipo: apenas_dados_reais_cliente
 ---
-Use a IMAGEM DO LOGÓTIPO EM ANEXO (logotipoReferencia) como referência visual direta para gerar a arte de base quadrada (1080×1080 px) de publicação do Instagram da marca **{{nome}}** ({{sector}}), estilo editorial **{{estiloPeca}}**.
-Extraia e estenda os motivos visuais, proporções e atmosferas do próprio logótipo (**{{formasDoLogotipo}}**) nesta cena ({{estiloDoLogotipo}}), na paleta exata **{{paleta}}**.
-Reservar o topo e o centro esquerdo em tom calmo e legível para o código compor por cima o logótipo vetorizado e os textos reais do cliente.
-REGRA ABSOLUTA: SEM TEXTO NENHUM, sem slogans desenhados, sem letreiros e sem selos escritos na imagem.
+Use a IMAGEM DO LOGÓTIPO EM ANEXO (logotipoReferencia) como referência visual obrigatória para gerar a arte completa da publicação Instagram ({{aspectRatio}}) da marca **{{nome}}** ({{sector}}).
+Tom da marca: **{{tom}}** — {{tomDescricao}}.
+Estilo da proposta (**{{layoutNome}}**): {{estiloPeca}}.
+Preservar rigorosamente o mesmo emblema, família tipográfica e formas do logótipo (**{{formasDoLogotipo}}** • {{estiloDoLogotipo}}) sobre a paleta **{{paleta}}**.
+ZONA SEGURA OBRIGATÓRIA (computador, telemóvel e grelha do perfil): {{zonaSegura}}.
+Textos exatos fornecidos pelo cliente a incluir (apenas os escritos abaixo em português europeu; proibido inventar dados adicionais):
+{{textosPedidos}}

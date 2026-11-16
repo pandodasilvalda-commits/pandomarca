@@ -1,22 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_COOKIE_NAME, verifyEntitlementCookie } from "@/lib/access";
-import { SECTORS, SectorId } from "@/lib/formats";
+import { analyzeAndStoreLogo } from "@/lib/analyze-logo";
 import {
-  DirectionId,
-  generateFinalVariantsA,
-  generateInitialDirections,
-  generateRefinementRound,
-  QuestionnaireInputA,
-  StudioLogoOption,
-} from "@/lib/logo-generator/svg-studio";
+  TOM_DA_MARCA_SPECS,
+  type TomDaMarca,
+} from "@/lib/config/redes-sociais";
+import {
+  BrandPalette,
+  FontPairId,
+  SECTORS,
+  SectorId,
+} from "@/lib/formats";
 import {
   ajustarPropostaLogotipo,
+  buildLogoVisualDna,
+  decodeBase64ImageInput,
   gerarPropostasLogotipoRonda,
   ImagemProviderError,
   LogoPropostaIA,
 } from "@/lib/imagem";
-import { analyzeAndStoreLogo } from "@/lib/analyze-logo";
-import { generateFourProposals } from "@/lib/palette";
+import { buildBrandPalette, generateFourProposals } from "@/lib/palette";
+import { updateDraftMeta } from "@/lib/storage";
 
 function httpStatusForImagemError(err: ImagemProviderError): number {
   if (
@@ -30,6 +34,42 @@ function httpStatusForImagemError(err: ImagemProviderError): number {
   return 503;
 }
 
+function parseTom(rawTom: unknown): TomDaMarca {
+  if (typeof rawTom === "string" && rawTom in TOM_DA_MARCA_SPECS) {
+    return rawTom as TomDaMarca;
+  }
+  return "tradicional";
+}
+
+function resolvePalette(
+  rawPaleta: unknown,
+  fallback: BrandPalette
+): BrandPalette {
+  if (rawPaleta && typeof rawPaleta === "object") {
+    const p = rawPaleta as Record<string, unknown>;
+    const extractHex = (v: unknown): string | undefined => {
+      if (typeof v === "string") return v;
+      if (v && typeof v === "object" && "hex" in v && typeof (v as { hex?: unknown }).hex === "string") {
+        return (v as { hex: string }).hex;
+      }
+      return undefined;
+    };
+    const prim = extractHex(p.primaria);
+    const sec = extractHex(p.secundaria);
+    const pap = extractHex(p.papel);
+    const tin = extractHex(p.tinta);
+    if (prim && sec && pap && tin) {
+      return buildBrandPalette({
+        primaria: prim,
+        secundaria: sec,
+        papel: pap,
+        tinta: tin,
+      });
+    }
+  }
+  return fallback;
+}
+
 export async function POST(req: NextRequest) {
   const token = req.cookies.get(ACCESS_COOKIE_NAME)?.value;
   const entitlement = verifyEntitlementCookie(token);
@@ -38,7 +78,8 @@ export async function POST(req: NextRequest) {
       {
         ok: false,
         code: "unauthorized",
-        error: "Sessão expirada ou não autenticada. Introduza o seu código de acesso.",
+        error:
+          "Sessão expirada ou não autenticada. Introduza o seu código de acesso.",
       },
       { status: 401 }
     );
@@ -55,7 +96,8 @@ export async function POST(req: NextRequest) {
         {
           ok: false,
           code: "missing_name",
-          error: "O nome da marca é obrigatório para criar o logótipo de raiz.",
+          error:
+            "O nome da marca é obrigatório para criar o logótipo de raiz.",
         },
         { status: 400 }
       );
@@ -68,6 +110,8 @@ export async function POST(req: NextRequest) {
         ? (body.sector as SectorId)
         : "restauracao";
 
+    const tom = parseTom(rawInput.tom ?? body.tom);
+
     if (acao === "ronda") {
       const sessaoId = String(body.sessaoId || `sess_${entitlement.id}`);
       const ronda = Number(body.ronda || 1);
@@ -76,6 +120,7 @@ export async function POST(req: NextRequest) {
         nome,
         slogan: String(rawInput.slogan || body.slogan || "").trim(),
         sector,
+        tom,
         tresPalavras: String(rawInput.tresPalavras || "").trim(),
         coresPreferidas: String(rawInput.coresPreferidas || "").trim(),
         coresEvitar: String(rawInput.coresEvitar || "").trim(),
@@ -89,6 +134,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         ok: true,
         ronda,
+        tom,
         ...resRonda,
       });
     }
@@ -111,6 +157,7 @@ export async function POST(req: NextRequest) {
         sessaoId,
         nome,
         sector,
+        tom: parseTom(proposta.tom || tom),
         proposta,
         instrucao: String(body.instrucao || ""),
         ajusteNumero: Number(body.ajusteNumero || 1),
@@ -125,101 +172,88 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const referencias = Array.isArray(rawInput.referencias)
-      ? rawInput.referencias.slice(0, 5)
-      : [];
-
-    if (acao === "direcoes" && (referencias.length < 1 || referencias.length > 5)) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "Carregue entre 1 e 5 imagens de referência (cada uma com uma breve nota sobre o que lhe agrada) para orientar a criação.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const questionario: QuestionnaireInputA = {
-      nome,
-      slogan: String(rawInput.slogan || "").trim(),
-      sector,
-      tresPalavras: String(rawInput.tresPalavras || "").trim(),
-      coresPreferidas: String(rawInput.coresPreferidas || "").trim(),
-      coresEvitar: String(rawInput.coresEvitar || "").trim(),
-      referencias,
-    };
-
-    if (acao === "direcoes") {
-      const { directions, aiStatus } = await generateInitialDirections(questionario);
-      return NextResponse.json({
-        ok: true,
-        directions,
-        aiStatus,
-      });
-    }
-
-    if (acao === "refinar") {
-      const directionId: DirectionId =
-        body.directionId === "contemporanea" ? "contemporanea" : "classica";
-      const round = Number(body.round || 1);
-      if (round < 1 || round > 3) {
+    if (acao === "escolher") {
+      const sessaoId = String(body.sessaoId || `sess_${entitlement.id}`);
+      const proposta = body.proposta as Partial<LogoPropostaIA> | undefined;
+      if (!proposta?.imagemBase64) {
         return NextResponse.json(
           {
             ok: false,
-            code: "max_rounds_reached",
+            code: "invalid_input",
             error:
-              "Atingiu o limite máximo de 3 rondas de afinação («Mostrar outras 2»). Escolha uma das versões geradas para prosseguir.",
+              "Selecione uma proposta de logótipo válida antes de prosseguir.",
           },
           { status: 400 }
         );
       }
 
-      const options = await generateRefinementRound(questionario, directionId, round);
-      return NextResponse.json({
-        ok: true,
-        round,
-        maxRounds: 3,
-        options,
-      });
-    }
-
-    if (acao === "finalizar") {
-      const chosen = body.chosenOption as StudioLogoOption | undefined;
-      if (!chosen || !chosen.logoSvg || !chosen.simboloSvg) {
+      const logoBuf = decodeBase64ImageInput(proposta.imagemBase64);
+      if (!logoBuf || logoBuf.length === 0) {
         return NextResponse.json(
           {
             ok: false,
-            error: "Selecione uma versão do logótipo para gerar as variantes finais.",
+            code: "invalid_input",
+            error:
+              "A imagem do logótipo selecionado encontra-se vazia ou inválida.",
           },
           { status: 400 }
         );
       }
 
-      const variantes = await generateFinalVariantsA(questionario, chosen);
-
-      // Convert the chosen vector SVG into a standard Draft so it feeds the exact same kit pipeline
       const { meta } = await analyzeAndStoreLogo({
-        buffer: Buffer.from(variantes.horizontalSvg, "utf8"),
-        filename: "logotipo-raiz.svg",
-        mimeType: "image/svg+xml",
+        buffer: logoBuf,
+        filename: "logotipo-ia.png",
+        mimeType: "image/png",
         entrada: "A",
-        iconSvg: variantes.simboloSvg,
-        variantesEntradaA: variantes,
       });
 
-      // Override extracted palette with the studio-calibrated palette of the chosen direction
-      meta.paletaExtraida = chosen.paleta;
-      const propostas = generateFourProposals(chosen.paleta, sector);
-      // Ensure the first proposal ("Direta") uses the chosen fontPairId from the studio logo
-      propostas[0].fontPairId = chosen.fontPairId;
+      const tomFinal = parseTom(proposta.tom || tom);
+      const estiloDirecao: "classico" | "moderno" =
+        proposta.estilo === "moderno" ? "moderno" : "classico";
+      const paletaFinal = resolvePalette(
+        proposta.sugestaoPaleta,
+        meta.paletaExtraida
+      );
+
+      const logoDna = buildLogoVisualDna({
+        nome,
+        sector,
+        tom: tomFinal,
+        paleta: paletaFinal,
+        estiloDirecao,
+        fixtureLogoOrigem: proposta.fixtureNome,
+        tresPalavras: String(rawInput.tresPalavras || "").trim() || undefined,
+        aspectRatio: meta.width / Math.max(1, meta.height),
+        isDarkMonochrome: meta.isDarkMonochrome,
+      });
+
+      const updatedMeta =
+        updateDraftMeta(meta.id, {
+          tom: tomFinal,
+          paletaExtraida: paletaFinal,
+          sessaoImagemId: sessaoId,
+          logoDna,
+          estiloVisualEscolhido: estiloDirecao,
+          usarVetorizacaoOpcional: Boolean(body.usarVetorizacaoOpcional),
+        }) || {
+          ...meta,
+          tom: tomFinal,
+          paletaExtraida: paletaFinal,
+          sessaoImagemId: sessaoId,
+          logoDna,
+          estiloVisualEscolhido: estiloDirecao,
+        };
+
+      const propostas = generateFourProposals(paletaFinal, sector);
+      if (proposta.sugestaoFontPairId) {
+        propostas[0].fontPairId = proposta.sugestaoFontPairId as FontPairId;
+      }
 
       return NextResponse.json({
         ok: true,
-        draft: meta,
-        variantes,
+        draft: updatedMeta,
         propostas,
-        previewUrl: `/api/rascunhos/${meta.id}`,
+        previewUrl: `/api/rascunhos/${updatedMeta.id}`,
       });
     }
 

@@ -6,6 +6,7 @@ export type PromptTemplateId =
   | "logotipo-moderno"
   | "logotipo-editorial"
   | "ajuste-logotipo"
+  | "foto-perfil"
   | "capa-fundo"
   | "publicacao-instagram"
   | "story-instagram"
@@ -17,7 +18,7 @@ export interface PromptTemplateLoaded {
   id: PromptTemplateId;
   titulo: string;
   estilo: string;
-  permiteTextoNoLogotipo: "apenas_nome_ou_sem_texto" | "sem_texto_nenhum";
+  permiteTextoNoLogotipo: "apenas_nome_ou_sem_texto" | "sem_texto_nenhum" | "apenas_dados_reais_cliente";
   promptFinal: string;
 }
 
@@ -64,6 +65,8 @@ export function carregarPrompt(
   const permiteTextoNoLogotipo: PromptTemplateLoaded["permiteTextoNoLogotipo"] =
     policyRaw === "sem_texto_nenhum"
       ? "sem_texto_nenhum"
+      : policyRaw === "apenas_dados_reais_cliente"
+      ? "apenas_dados_reais_cliente"
       : "apenas_nome_ou_sem_texto";
 
   return {

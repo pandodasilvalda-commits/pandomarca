@@ -24,7 +24,7 @@ import { SiteFooter, SiteHeader } from "@/components/site-header";
 export const metadata: Metadata = {
   title: "PandoMarca — Kit de Identidade Visual e Presença Digital | PandoWeb",
   description:
-    "Crie um logótipo de raiz ou carregue o seu logótipo existente e receba o kit completo de 36 ficheiros para redes sociais, favicon, assinatura de email, estacionário e guia de marca.",
+    "Crie um logótipo de raiz ou carregue o seu logótipo existente e receba o kit completo de 38 ficheiros para redes sociais, favicon, assinatura de email, estacionário e guia de marca.",
 };
 
 export default function RootLayout({

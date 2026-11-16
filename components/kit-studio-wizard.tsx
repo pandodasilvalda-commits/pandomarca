@@ -15,6 +15,7 @@ import {
   KeyRound,
   Layers,
   Loader2,
+  Monitor,
   Palette,
   PenTool,
   Plus,
@@ -22,11 +23,20 @@ import {
   RotateCcw,
   ShieldCheck,
   SlidersHorizontal,
+  Smartphone,
   Sparkles,
-  Trash2,
   Upload,
   Wand2,
 } from "lucide-react";
+import {
+  REDES_SOCIAIS_CONFIG,
+  REDES_SOCIAIS_LIST,
+  REFERENCE_DATE_REDES_PT,
+  TOM_DA_MARCA_SPECS,
+  TONS_DA_MARCA_LIST,
+  type RedeSocialId,
+  type TomDaMarca,
+} from "@/lib/config/redes-sociais";
 import {
   BrandData,
   BrandPalette,
@@ -38,9 +48,8 @@ import {
   FormatCategory,
   SECTORS,
   SectorId,
-  STYLE_GROUPS,
-  StyleId,
   StyleGroupOverrides,
+  StyleId,
 } from "@/lib/formats";
 import { buildBrandPalette, PaletteAndTypeProposal } from "@/lib/palette";
 import { SAMPLE_BRANDS } from "@/lib/samples";
@@ -50,26 +59,20 @@ import type {
   OrcamentoKitEstado,
   PublicImagemConfig,
 } from "@/lib/imagem";
-import type { CoverLayoutId } from "@/lib/capas/catalog";
-import type {
-  DirectionId,
-  FinalVariantsA,
-  ReferenceItemInput,
-  StudioLogoOption,
-} from "@/lib/logo-generator/svg-studio";
+import { Circle40pxTestPreview, SafeZoneSocialFrame } from "./safe-zone-preview";
 import {
-  CapaPreviewItem,
+  PecaPropostaPreview,
   StudioSessionSnapshot,
-  VetorClientState,
   WIZARD_STEPS,
   WizardStepId,
 } from "./wizard-types";
 
-const SESSION_STORAGE_KEY = "pandomarca:studio:v2";
+const SESSION_STORAGE_KEY = "pandomarca:studio:v3";
 
 const DEFAULT_BRAND_DATA: BrandData = {
   nome: "",
   sector: "restauracao",
+  tom: "tradicional",
   simbolo: false,
   slogan: "",
   pessoa: "",
@@ -101,12 +104,41 @@ const DEFAULT_STYLE_OVERRIDES: StyleGroupOverrides = {
 const DEFAULT_IMAGEM_CONFIG: PublicImagemConfig = {
   modo: "falso",
   fornecedor: "local",
+  modelo: "gemini-nano-banana-2.1",
   limitePorKitEur: 1.5,
   maxRondas: 3,
   maxAjustes: 3,
   semCustosReais: true,
   etiquetaModo: "Modo de demonstração",
 };
+
+const PROPOSTA_FEATURED_REDES: { id: RedeSocialId; label: string }[] = [
+  { id: "fb-capa", label: "Facebook Capa (1640×624)" },
+  { id: "ig-publicacao-1080x1350", label: "IG Feed 4:5 (1080×1350)" },
+  { id: "ig-publicacao", label: "IG Feed 1:1 (1080×1080)" },
+  { id: "ig-story", label: "IG Story (1080×1920)" },
+  { id: "yt-banner", label: "YouTube Banner (2560×1440)" },
+  { id: "fb-perfil", label: "Avatar Circular (720×720)" },
+  { id: "li-capa-empresa", label: "LinkedIn Página (1128×191)" },
+];
+
+const STATIONERY_GROUPS = [
+  {
+    key: "cartao" as const,
+    rotulo: "Cartão de visita (PDF 91×61 mm)",
+    descricao: "Frente e verso com sangria de 3 mm",
+  },
+  {
+    key: "papel" as const,
+    rotulo: "Papel de carta A4 (PDF)",
+    descricao: "Cabeçalho estilizado, miolo limpo e rodapé",
+  },
+  {
+    key: "assinatura" as const,
+    rotulo: "Assinatura de email (HTML)",
+    descricao: "Tabela HTML com CSS em linha",
+  },
+];
 
 const SAMPLE_BAKERY_PHOTO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
   <defs>
@@ -141,18 +173,11 @@ function persistSnapshotSafely(snapshot: StudioSessionSnapshot): void {
   try {
     window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(snapshot));
   } catch {
-    // Se imagens base64 excederem a quota do sessionStorage, guarda o estado leve essencial sem falhar
     try {
       const compact: StudioSessionSnapshot = {
         ...snapshot,
         propostasIA: null,
         chosenLogoOriginalDataUrl: undefined,
-        vetorState: snapshot.vetorState
-          ? {
-              ...snapshot.vetorState,
-              previewDataUrl: "",
-            }
-          : null,
       };
       window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(compact));
     } catch {
@@ -169,7 +194,8 @@ export function KitStudioWizard() {
   const [envConfigured, setEnvConfigured] = useState(true);
   const [missingVars, setMissingVars] = useState<string[]>([]);
   const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
-  const [imagemConfig, setImagemConfig] = useState<PublicImagemConfig>(DEFAULT_IMAGEM_CONFIG);
+  const [imagemConfig, setImagemConfig] =
+    useState<PublicImagemConfig>(DEFAULT_IMAGEM_CONFIG);
   const [codigoInput, setCodigoInput] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
@@ -186,71 +212,81 @@ export function KitStudioWizard() {
   const [canRetry, setCanRetry] = useState(false);
   const hydratedRef = useRef(false);
 
-  // 3. Dados do negócio
+  // 3. Dados do negócio e Tom da marca
   const [dados, setDados] = useState<BrandData>(DEFAULT_BRAND_DATA);
+  const [tom, setTom] = useState<TomDaMarca>("tradicional");
+  const [usarVetorizacaoOpcional, setUsarVetorizacaoOpcional] = useState(false);
   const [tresPalavras, setTresPalavras] = useState("");
   const [coresPreferidas, setCoresPreferidas] = useState("");
   const [coresEvitar, setCoresEvitar] = useState("");
-  const [referencias, setReferencias] = useState<ReferenceItemInput[]>([]);
 
-  // 4. Fluxo de logótipo com IA (e reserva SVG)
+  // 4. Fluxo de logótipo por geração de imagem (Entrada A e Entrada B)
   const [rondaAtual, setRondaAtual] = useState<number>(1);
   const [ajustesUsados, setAjustesUsados] = useState<number>(0);
   const [orcamento, setOrcamento] = useState<OrcamentoKitEstado | null>(null);
-  const [propostasIA, setPropostasIA] = useState<[LogoPropostaIA, LogoPropostaIA] | null>(null);
+  const [propostasIA, setPropostasIA] = useState<[LogoPropostaIA, LogoPropostaIA] | null>(
+    null
+  );
   const [ajustarAlvoId, setAjustarAlvoId] = useState<string | null>(null);
   const [ajusteInstrucao, setAjusteInstrucao] = useState("");
   const [chosenLogoOriginalDataUrl, setChosenLogoOriginalDataUrl] = useState<string>("");
   const [chosenLogoFixtureNome, setChosenLogoFixtureNome] = useState<string>("");
-  const [chosenLogoEstilo, setChosenLogoEstilo] = useState<"classico" | "moderno">("classico");
-
-  // Reserva SVG por regras (caso o utilizador opte explicitamente pela reserva)
-  const [usarReservaSvg, setUsarReservaSvg] = useState(false);
-  const [direcoesReserva, setDirecoesReserva] = useState<[StudioLogoOption, StudioLogoOption] | null>(null);
-  const [chosenDirectionId, setChosenDirectionId] = useState<DirectionId>("classica");
-  const [refinamentoRound, setRefinamentoRound] = useState<number>(1);
-  const [refinamentoOpcoes, setRefinamentoOpcoes] = useState<[StudioLogoOption, StudioLogoOption] | null>(null);
+  const [chosenLogoEstilo, setChosenLogoEstilo] = useState<"classico" | "moderno">(
+    "classico"
+  );
 
   // Entrada B (ficheiro existente)
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [draft, setDraft] = useState<DraftMeta | null>(null);
 
-  // 5. Ecrã Confirmar Vetor (vtracer + potrace)
-  const [vetorState, setVetorState] = useState<VetorClientState | null>(null);
-  const [activeVectorTab, setActiveVectorTab] = useState<"color" | "simbolo" | "mono" | "negativo">("color");
-  const [variantesFinaisA, setVariantesFinaisA] = useState<FinalVariantsA | null>(null);
-
-  // 6. Propostas de Paleta e Tipografia
+  // 5. Propostas de Paleta e Tipografia
   const [propostas, setPropostas] = useState<PaletteAndTypeProposal[]>([]);
   const [selectedProposalId, setSelectedProposalId] = useState<string>("direta");
   const [showAllProposals, setShowAllProposals] = useState(false);
   const [customPalette, setCustomPalette] = useState<BrandPalette>(DEFAULT_PALETTE);
   const [selectedFontPair, setSelectedFontPair] = useState<FontPairId>("clara");
 
-  // 7. Capas em Camadas (1 Moderna + 1 Clássica) & Estilos de Grupo
-  const [capaRound, setCapaRound] = useState<number>(1);
-  const [showAllCapas, setShowAllCapas] = useState(false);
-  const [capasPreviews, setCapasPreviews] = useState<CapaPreviewItem[]>([]);
-  const [capasLoading, setCapasLoading] = useState(false);
-  const [selectedCoverLayoutId, setSelectedCoverLayoutId] =
-    useState<CoverLayoutId>("moderno-recorte");
-  const selectedCoverLayoutRef = useRef<CoverLayoutId>("moderno-recorte");
-  useEffect(() => {
-    selectedCoverLayoutRef.current = selectedCoverLayoutId;
-  }, [selectedCoverLayoutId]);
+  // Estacionário opcional (Cartão / Papel / Assinatura)
   const [kitStyle, setKitStyle] = useState<StyleId>("degrade");
-  const [showKitCatalog, setShowKitCatalog] = useState(false);
   const [styleOverrides, setStyleOverrides] =
     useState<StyleGroupOverrides>(DEFAULT_STYLE_OVERRIDES);
   const [openGroupCatalog, setOpenGroupCatalog] = useState<Record<string, boolean>>({});
-  const [showGroupOverridesPanel, setShowGroupOverridesPanel] = useState(false);
+  const [showStationeryPanel, setShowStationeryPanel] = useState(false);
   const [photoDataUrl, setPhotoDataUrl] = useState<string>("");
   const [photoFilename, setPhotoFilename] = useState<string>("");
 
-  // 8. Kit gerado, Pré-visualização e ZIP
+  // 6. Passo 5 — Propostas visuais da marca (Moderna + Clássica) com referência obrigatória
+  const [estiloVisual, setEstiloVisual] = useState<"moderno" | "classico">("moderno");
+  const [activePropostaRedeId, setActivePropostaRedeId] =
+    useState<RedeSocialId>("fb-capa");
+  const [propostaViewport, setPropostaViewport] = useState<"desktop" | "mobile">(
+    "desktop"
+  );
+  const [showSafeZonesOnPropostas, setShowSafeZonesOnPropostas] = useState(true);
+  const [propostasPecas, setPropostasPecas] = useState<PecaPropostaPreview[]>([]);
+  const [propostasAvisoTextos, setPropostasAvisoTextos] = useState<string>(
+    "Verifique os textos gerados na imagem face aos dados introduzidos; se alguma palavra precisar de correção, clique em «Regenerar»."
+  );
+  const [propostasLoading, setPropostasLoading] = useState(false);
+  const [regeneratingEstilo, setRegeneratingEstilo] = useState<
+    "moderno" | "classico" | null
+  >(null);
+  const propostasAbortRef = useRef<AbortController | null>(null);
+  const propostasReqSeqRef = useRef(0);
+
+  // 7. Passo 6 & 7 — Pré-visualização (38 peças), zonas seguras, 40 px e regeneração
   const [generatedKit, setGeneratedKit] = useState<KitMeta | null>(null);
   const [activeResultCategory, setActiveResultCategory] =
     useState<FormatCategory | "todas">("todas");
+  const [subFilterRedes, setSubFilterRedes] = useState<
+    "todas" | "perfis" | "capas-posts"
+  >("todas");
+  const [previewViewport, setPreviewViewport] = useState<"desktop" | "mobile">(
+    "desktop"
+  );
+  const [showSafeZonesOnPreview, setShowSafeZonesOnPreview] = useState(true);
+  const [regeneratingRedeId, setRegeneratingRedeId] = useState<RedeSocialId | null>(null);
+  const [cacheBusters, setCacheBusters] = useState<Record<string, number>>({});
 
   const setFailure = useCallback(
     (msg: string, retryFn?: () => Promise<void>) => {
@@ -275,7 +311,7 @@ export function KitStudioWizard() {
     }
   }
 
-  // Hidratação inicial: valida cookie no servidor e restaura sessão de progresso
+  // Hidratação inicial: valida cookie no servidor e restaura sessão
   useEffect(() => {
     const paramEntrada = searchParams?.get("entrada");
 
@@ -299,7 +335,7 @@ export function KitStudioWizard() {
             if (raw) {
               try {
                 const snap = JSON.parse(raw) as StudioSessionSnapshot;
-                if (snap?.version === 2) {
+                if (snap?.version === 3) {
                   setSessaoId(snap.sessaoId || makeSessaoId());
                   setEntradaEscolhida(
                     paramEntrada === "A" || paramEntrada === "B"
@@ -307,26 +343,32 @@ export function KitStudioWizard() {
                       : snap.entradaEscolhida || "A"
                   );
                   if (snap.dados) setDados(snap.dados);
-                  if (typeof snap.tresPalavras === "string") setTresPalavras(snap.tresPalavras);
-                  if (typeof snap.coresPreferidas === "string") setCoresPreferidas(snap.coresPreferidas);
-                  if (typeof snap.coresEvitar === "string") setCoresEvitar(snap.coresEvitar);
+                  if (snap.tom && snap.tom in TOM_DA_MARCA_SPECS) setTom(snap.tom);
+                  setUsarVetorizacaoOpcional(Boolean(snap.usarVetorizacaoOpcional));
+                  if (snap.estiloVisual === "moderno" || snap.estiloVisual === "classico") {
+                    setEstiloVisual(snap.estiloVisual);
+                  }
+                  if (typeof snap.tresPalavras === "string")
+                    setTresPalavras(snap.tresPalavras);
+                  if (typeof snap.coresPreferidas === "string")
+                    setCoresPreferidas(snap.coresPreferidas);
+                  if (typeof snap.coresEvitar === "string")
+                    setCoresEvitar(snap.coresEvitar);
                   if (snap.rondaAtual) setRondaAtual(snap.rondaAtual);
-                  if (typeof snap.ajustesUsados === "number") setAjustesUsados(snap.ajustesUsados);
+                  if (typeof snap.ajustesUsados === "number")
+                    setAjustesUsados(snap.ajustesUsados);
                   if (snap.draft) setDraft(snap.draft);
-                  if (snap.variantesFinaisA) setVariantesFinaisA(snap.variantesFinaisA);
                   if (snap.propostas?.length) setPropostas(snap.propostas);
-                  if (snap.selectedProposalId) setSelectedProposalId(snap.selectedProposalId);
+                  if (snap.selectedProposalId)
+                    setSelectedProposalId(snap.selectedProposalId);
                   setShowAllProposals(Boolean(snap.showAllProposals));
                   if (snap.customPalette) setCustomPalette(snap.customPalette);
                   if (snap.selectedFontPair) setSelectedFontPair(snap.selectedFontPair);
-                  if (snap.capaRound) setCapaRound(snap.capaRound);
-                  setShowAllCapas(Boolean(snap.showAllCapas));
-                  if (snap.selectedCoverLayoutId) setSelectedCoverLayoutId(snap.selectedCoverLayoutId);
                   if (snap.kitStyle) setKitStyle(snap.kitStyle);
-                  setShowKitCatalog(Boolean(snap.showKitCatalog));
                   if (snap.styleOverrides) setStyleOverrides(snap.styleOverrides);
                   if (snap.generatedKit) setGeneratedKit(snap.generatedKit);
-                  if (snap.activeResultCategory) setActiveResultCategory(snap.activeResultCategory);
+                  if (snap.activeResultCategory)
+                    setActiveResultCategory(snap.activeResultCategory);
                   if (snap.propostasIA) setPropostasIA(snap.propostasIA);
                   if (snap.chosenLogoOriginalDataUrl) {
                     setChosenLogoOriginalDataUrl(snap.chosenLogoOriginalDataUrl);
@@ -337,10 +379,17 @@ export function KitStudioWizard() {
                   if (snap.chosenLogoEstilo) {
                     setChosenLogoEstilo(snap.chosenLogoEstilo);
                   }
-                  if (snap.vetorState) setVetorState(snap.vetorState);
                   if (snap.orcamento) setOrcamento(snap.orcamento);
 
-                  if (snap.step && snap.step !== "acesso") {
+                  const validSteps: WizardStepId[] = [
+                    "dados",
+                    "logotipo",
+                    "paleta",
+                    "propostas",
+                    "previsualizacao",
+                    "zip",
+                  ];
+                  if (snap.step && validSteps.includes(snap.step)) {
                     restoredStep = snap.step;
                   }
                 }
@@ -360,32 +409,30 @@ export function KitStudioWizard() {
       });
   }, [searchParams]);
 
-  // Guardar progresso por sessão automaticamente
+  // Guardar progresso automaticamente
   useEffect(() => {
     if (!hydratedRef.current || !entitlement) return;
     const snap: StudioSessionSnapshot = {
-      version: 2,
+      version: 3,
       step,
       entradaEscolhida,
       sessaoId,
-      dados,
+      dados: { ...dados, tom },
+      tom,
+      usarVetorizacaoOpcional,
+      estiloVisual,
       tresPalavras,
       coresPreferidas,
       coresEvitar,
       rondaAtual,
       ajustesUsados,
       draft,
-      variantesFinaisA,
       propostas,
       selectedProposalId,
       showAllProposals,
       customPalette,
       selectedFontPair,
-      capaRound,
-      showAllCapas,
-      selectedCoverLayoutId,
       kitStyle,
-      showKitCatalog,
       styleOverrides,
       generatedKit,
       activeResultCategory,
@@ -393,11 +440,8 @@ export function KitStudioWizard() {
       chosenLogoOriginalDataUrl,
       chosenLogoFixtureNome,
       chosenLogoEstilo,
-      vetorState,
       orcamento,
       imagemConfig,
-      chosenDirectionId,
-      referenciasCount: referencias.length,
     };
     persistSnapshotSafely(snap);
   }, [
@@ -406,23 +450,21 @@ export function KitStudioWizard() {
     entradaEscolhida,
     sessaoId,
     dados,
+    tom,
+    usarVetorizacaoOpcional,
+    estiloVisual,
     tresPalavras,
     coresPreferidas,
     coresEvitar,
     rondaAtual,
     ajustesUsados,
     draft,
-    variantesFinaisA,
     propostas,
     selectedProposalId,
     showAllProposals,
     customPalette,
     selectedFontPair,
-    capaRound,
-    showAllCapas,
-    selectedCoverLayoutId,
     kitStyle,
-    showKitCatalog,
     styleOverrides,
     generatedKit,
     activeResultCategory,
@@ -430,11 +472,8 @@ export function KitStudioWizard() {
     chosenLogoOriginalDataUrl,
     chosenLogoFixtureNome,
     chosenLogoEstilo,
-    vetorState,
     orcamento,
     imagemConfig,
-    chosenDirectionId,
-    referencias.length,
   ]);
 
   function applySectorDefaultStyles(sector: SectorId, hasPhoto = Boolean(photoDataUrl)) {
@@ -457,17 +496,13 @@ export function KitStudioWizard() {
 
   function applyPresetData(presetId: "forno-da-vilarica" | "oficina-do-sao") {
     const sample = SAMPLE_BRANDS[presetId];
-    setDados({ ...sample.dados });
+    const presetTom: TomDaMarca =
+      presetId === "oficina-do-sao" ? "tecnico" : "tradicional";
+    setTom(presetTom);
+    setDados({ ...sample.dados, tom: presetTom });
     setTresPalavras(sample.questionarioA.tresPalavras);
     setCoresPreferidas(sample.questionarioA.coresPreferidas);
     setCoresEvitar(sample.questionarioA.coresEvitar);
-    setReferencias(
-      sample.questionarioA.referencias.map((r) => ({
-        nomeFicheiro: r.titulo,
-        nota: r.nota,
-        dataUrl: svgToDataUrl(r.svg),
-      }))
-    );
     applySectorDefaultStyles(sample.dados.sector, Boolean(photoDataUrl));
     clearError();
   }
@@ -509,10 +544,12 @@ export function KitStudioWizard() {
     }
     setSessaoId(makeSessaoId());
     setDados(DEFAULT_BRAND_DATA);
+    setTom("tradicional");
+    setUsarVetorizacaoOpcional(false);
+    setEstiloVisual("moderno");
     setTresPalavras("");
     setCoresPreferidas("");
     setCoresEvitar("");
-    setReferencias([]);
     setRondaAtual(1);
     setAjustesUsados(0);
     setOrcamento(null);
@@ -521,14 +558,12 @@ export function KitStudioWizard() {
     setChosenLogoFixtureNome("");
     setChosenLogoEstilo("classico");
     setDraft(null);
-    setVetorState(null);
-    setVariantesFinaisA(null);
     setPropostas([]);
-    setCapasPreviews([]);
+    setPropostasPecas([]);
     setGeneratedKit(null);
     setCustomPalette(DEFAULT_PALETTE);
     setSelectedFontPair("clara");
-    setSelectedCoverLayoutId("moderno-recorte");
+    setCacheBusters({});
     clearError();
     setStep("dados");
   }
@@ -552,35 +587,7 @@ export function KitStudioWizard() {
     setCustomPalette(next);
   }
 
-  function handleAddReferenceFiles(files: FileList | null) {
-    if (!files || files.length === 0) return;
-    const remainingSlots = 5 - referencias.length;
-    if (remainingSlots <= 0) {
-      setFailure("Já atingiu o limite máximo de 5 imagens de referência.");
-      return;
-    }
-
-    const toProcess = Array.from(files).slice(0, remainingSlots);
-    toProcess.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        setReferencias((prev) => {
-          if (prev.length >= 5) return prev;
-          return [
-            ...prev,
-            {
-              nomeFicheiro: file.name,
-              nota: "Gosto do equilíbrio visual e clareza da forma.",
-              dataUrl: typeof reader.result === "string" ? reader.result : undefined,
-            },
-          ];
-        });
-      };
-      reader.readAsDataURL(file);
-    });
-  }
-
-  // Entrada A (IA): pedir ronda 1..3 (2 propostas claramente distintas)
+  // Entrada A: pedir ronda 1..3 (2 propostas de logótipo com o tom escolhido)
   const executeLogoRound = useCallback(
     async (roundNum: number, customSessId?: string) => {
       if (!dados.nome.trim()) {
@@ -590,9 +597,8 @@ export function KitStudioWizard() {
 
       const activeSessId = customSessId || sessaoId;
       clearError();
-      setUsarReservaSvg(false);
       setBusyDetail(
-        `A gerar 2 propostas distintas de logótipo (Ronda ${roundNum} de ${imagemConfig.maxRondas})…`
+        `A gerar 2 propostas de logótipo no tom «${TOM_DA_MARCA_SPECS[tom].nome}» (Ronda ${roundNum} de ${imagemConfig.maxRondas})…`
       );
 
       try {
@@ -607,6 +613,7 @@ export function KitStudioWizard() {
               nome: dados.nome,
               slogan: dados.slogan,
               sector: dados.sector,
+              tom,
               tresPalavras,
               coresPreferidas,
               coresEvitar,
@@ -649,15 +656,18 @@ export function KitStudioWizard() {
       imagemConfig.maxRondas,
       sessaoId,
       setFailure,
+      tom,
       tresPalavras,
     ]
   );
 
-  // Entrada A (IA): ajustar uma proposta com instrução do cliente
+  // Entrada A: ajustar uma proposta
   async function executeAdjustProposal(proposta: LogoPropostaIA, instrucao: string) {
     const cleanInstr = instrucao.trim();
     if (!cleanInstr) {
-      setFailure("Escreva uma instrução curta para ajustar a proposta (ex.: «traço mais forte»).");
+      setFailure(
+        "Escreva uma instrução curta para ajustar a proposta (ex.: «aumentar contraste e espessura do emblema»)."
+      );
       return;
     }
 
@@ -679,6 +689,7 @@ export function KitStudioWizard() {
             nome: dados.nome,
             slogan: dados.slogan,
             sector: dados.sector,
+            tom,
           },
         }),
       });
@@ -711,170 +722,78 @@ export function KitStudioWizard() {
     }
   }
 
-  // Vetorizar localmente (gratuito) uma proposta IA ou o ficheiro carregado na Entrada B
-  async function executeLocalVectorize(opts: {
-    imagemBase64?: string;
-    draftId?: string;
-    suggestedPaleta?: BrandPalette;
-    suggestedFont?: FontPairId;
-    titleLabel?: string;
-    fixtureNome?: string;
-    estiloDirecao?: "classico" | "moderno";
-  }) {
+  // Entrada A: Escolher logótipo (passa diretamente a imagem de referência obrigatória, sem obrigar a vetorização)
+  async function handleChooseIaProposal(proposta: LogoPropostaIA) {
     clearError();
     setBusyDetail(
-      "A converter o logótipo em vetor limpo (≤ 8 cores) e verificar legibilidade a 32 px…"
+      "A fixar o logótipo escolhido como imagem de referência para todas as peças seguintes…"
     );
-    if (opts.suggestedPaleta) {
-      setCustomPalette(opts.suggestedPaleta);
-    }
-    if (opts.suggestedFont) {
-      setSelectedFontPair(opts.suggestedFont);
-    }
-    setChosenLogoFixtureNome(opts.fixtureNome || "");
-    if (opts.estiloDirecao) {
-      setChosenLogoEstilo(opts.estiloDirecao);
-    }
 
     try {
-      const pal = opts.suggestedPaleta || customPalette;
-      const res = await fetch("/api/vetorizar", {
+      const res = await fetch("/api/logotipo-raiz", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          acao: "preview",
+          acao: "escolher",
           sessaoId,
-          imagemBase64: opts.imagemBase64,
-          draftId: opts.draftId,
-          inkHex: pal.tinta.hex,
-          maxColors: 8,
-          simboloApenas: dados.simbolo,
-          paletteHints: [
-            pal.primaria.hex,
-            pal.secundaria.hex,
-            pal.tinta.hex,
-            pal.papel.hex,
-          ],
-          paleta: opts.suggestedPaleta
-            ? {
-                primaria: opts.suggestedPaleta.primaria.hex,
-                secundaria: opts.suggestedPaleta.secundaria.hex,
-                papel: opts.suggestedPaleta.papel.hex,
-                tinta: opts.suggestedPaleta.tinta.hex,
-              }
-            : undefined,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        setFailure(
-          data.error || "Não foi possível vetorizar o logótipo.",
-          () => executeLocalVectorize(opts)
-        );
-        return;
-      }
-
-      if (opts.imagemBase64) {
-        setChosenLogoOriginalDataUrl(opts.imagemBase64);
-      } else if (opts.draftId) {
-        setChosenLogoOriginalDataUrl(`/api/rascunhos/${opts.draftId}`);
-      }
-
-      setVetorState(data.vetor);
-      if (data.paletaSugerida && !opts.suggestedPaleta) {
-        setCustomPalette(data.paletaSugerida);
-      }
-      if (data.orcamento) setOrcamento(data.orcamento);
-      setActiveVectorTab("color");
-      setStep("vetor");
-    } catch {
-      setFailure(
-        "Erro de comunicação durante a vetorização do logótipo.",
-        () => executeLocalVectorize(opts)
-      );
-    } finally {
-      setBusyDetail(null);
-    }
-  }
-
-  // Confirmar vetor e produzir as 5 variantes oficiais + 4 propostas de paleta
-  async function executeConfirmVectorAndVariants() {
-    if (!vetorState) {
-      setFailure("Ainda não existe um vetor gerado para confirmar.");
-      return;
-    }
-
-    clearError();
-    setBusyDetail("A confirmar o vetor e a gerar as 5 variantes oficiais do logótipo…");
-
-    try {
-      const res = await fetch("/api/vetorizar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          acao: "confirmar",
-          sessaoId,
-          entrada: entradaEscolhida,
-          dados,
-          tresPalavras,
-          fixtureNome: chosenLogoFixtureNome || undefined,
-          estiloDirecao: chosenLogoEstilo,
-          fontPairId: selectedFontPair,
-          paleta: {
-            primaria: customPalette.primaria.hex,
-            secundaria: customPalette.secundaria.hex,
-            papel: customPalette.papel.hex,
-            tinta: customPalette.tinta.hex,
-          },
-          vetor: {
-            colorSvg: vetorState.colorSvg,
-            simboloSvg: vetorState.simboloSvg,
-            simboloNegativoSvg: vetorState.simboloNegativoSvg,
-            monocromaticoSvg: vetorState.monocromaticoSvg,
-            negativoSvg: vetorState.negativoSvg,
-            negativoTransparenteSvg: vetorState.negativoTransparenteSvg,
-            colorsHex: vetorState.colorsHex,
+          proposta,
+          usarVetorizacaoOpcional,
+          questionario: {
+            nome: dados.nome,
+            slogan: dados.slogan,
+            sector: dados.sector,
+            tom,
+            tresPalavras,
           },
         }),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
         setFailure(
-          data.error || "Não foi possível confirmar o vetor.",
-          executeConfirmVectorAndVariants
+          data.error || "Não foi possível guardar o logótipo escolhido.",
+          () => handleChooseIaProposal(proposta)
         );
         return;
       }
 
       setDraft(data.draft);
-      setVariantesFinaisA(data.variantes);
       setPropostas(data.propostas || []);
       setShowAllProposals(false);
-      if (data.propostas?.length > 0) {
-        handleSelectProposal(data.propostas[0]);
-      }
+      setCustomPalette(proposta.sugestaoPaleta);
+      setSelectedFontPair(proposta.sugestaoFontPairId);
+      setSelectedProposalId(data.propostas?.[0]?.id || "direta");
+      setChosenLogoOriginalDataUrl(proposta.imagemBase64);
+      setChosenLogoFixtureNome(proposta.fixtureNome || "");
+      setChosenLogoEstilo(proposta.estilo);
+      setEstiloVisual(proposta.estilo);
       applySectorDefaultStyles(dados.sector);
       setStep("paleta");
     } catch {
       setFailure(
-        "Erro de ligação ao gerar as 5 variantes a partir do vetor.",
-        executeConfirmVectorAndVariants
+        "Falha de comunicação ao registar o logótipo escolhido.",
+        () => handleChooseIaProposal(proposta)
       );
     } finally {
       setBusyDetail(null);
     }
   }
 
-  // Entrada B: Analisar ficheiro ou preset
+  // Entrada B: Analisar ficheiro ou preset como imagem de referência
   async function handleAnalyzeEntradaB(
     presetId?: "forno-da-vilarica" | "oficina-do-sao"
   ) {
     clearError();
-    let currentDados = dados;
+    let currentDados = { ...dados, tom };
+    let currentTom = tom;
     if (presetId) {
       const sample = SAMPLE_BRANDS[presetId];
-      currentDados = { ...sample.dados };
+      currentTom = presetId === "oficina-do-sao" ? "tecnico" : "tradicional";
+      currentDados = { ...sample.dados, tom: currentTom };
+      setTom(currentTom);
       setDados(currentDados);
+      setTresPalavras(sample.questionarioA.tresPalavras);
+      setCoresPreferidas(sample.questionarioA.coresPreferidas);
+      setCoresEvitar(sample.questionarioA.coresEvitar);
     }
 
     if (!currentDados.nome.trim()) {
@@ -884,12 +803,12 @@ export function KitStudioWizard() {
 
     if (!presetId && !selectedFile) {
       setFailure(
-        "Selecione um ficheiro PNG, JPG ou SVG (até 8 MB) ou utilize um dos exemplos incluídos."
+        "Selecione um ficheiro PNG, JPG ou SVG (até 8 MB) ou utilize o ensaio incluído."
       );
       return;
     }
 
-    setBusyDetail("A analisar transparência da margem, nitidez e paleta cromática…");
+    setBusyDetail("A analisar margem, contraste e extrair a paleta do logótipo de referência…");
     try {
       let res: Response;
       if (presetId) {
@@ -899,6 +818,7 @@ export function KitStudioWizard() {
           body: JSON.stringify({
             presetId,
             sector: currentDados.sector,
+            tom: currentTom,
             nome: currentDados.nome,
             tresPalavras,
           }),
@@ -907,6 +827,7 @@ export function KitStudioWizard() {
         const fd = new FormData();
         fd.append("ficheiro", selectedFile!);
         fd.append("sector", currentDados.sector);
+        fd.append("tom", currentTom);
         fd.append("nome", currentDados.nome);
         fd.append("tresPalavras", tresPalavras);
         res = await fetch("/api/analisar", {
@@ -948,204 +869,66 @@ export function KitStudioWizard() {
     }
   }
 
-  // Reserva SVG (gerador geométrico sem IA)
-  async function handleGenerateDirectionsReserve() {
-    clearError();
-    if (!dados.nome.trim()) {
-      setFailure("Indique o nome da marca.");
-      return;
-    }
-    const refsToUse =
-      referencias.length >= 1
-        ? referencias
-        : [
-            {
-              nomeFicheiro: "referencia-estudio.svg",
-              nota: "Equilíbrio entre símbolo clássico e tipografia limpa.",
-            },
-          ];
-
-    setBusyDetail("A preparar as 2 direções no gerador SVG de reserva…");
-    try {
-      const res = await fetch("/api/logotipo-raiz", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          acao: "direcoes",
-          questionario: {
-            nome: dados.nome,
-            slogan: dados.slogan,
-            sector: dados.sector,
-            tresPalavras,
-            coresPreferidas,
-            coresEvitar,
-            referencias: refsToUse,
-          },
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        setFailure(
-          data.error || "Erro ao gerar direções SVG.",
-          handleGenerateDirectionsReserve
-        );
-        return;
-      }
-      setDirecoesReserva(data.directions);
-      setRefinamentoOpcoes(null);
-      setUsarReservaSvg(true);
-      setStep("logotipo");
-    } catch {
-      setFailure(
-        "Falha ao contactar o gerador SVG de reserva.",
-        handleGenerateDirectionsReserve
-      );
-    } finally {
-      setBusyDetail(null);
-    }
-  }
-
-  async function handleRequestRefinementReserve(directionId: DirectionId, round: number) {
-    clearError();
-    const refsToUse =
-      referencias.length >= 1
-        ? referencias
-        : [{ nomeFicheiro: "ref.svg", nota: "Composição limpa e equilibrada." }];
-    setBusyDetail(`A gerar 2 versões afinadas de reserva (Ronda ${round} de 3)…`);
-    try {
-      const res = await fetch("/api/logotipo-raiz", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          acao: "refinar",
-          directionId,
-          round,
-          questionario: {
-            nome: dados.nome,
-            slogan: dados.slogan,
-            sector: dados.sector,
-            tresPalavras,
-            coresPreferidas,
-            coresEvitar,
-            referencias: refsToUse,
-          },
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        setFailure(data.error || "Erro ao afinar versão SVG.");
-        return;
-      }
-      setChosenDirectionId(directionId);
-      setRefinamentoRound(round);
-      setRefinamentoOpcoes(data.options);
-    } catch {
-      setFailure("Erro ao afinar versão SVG.");
-    } finally {
-      setBusyDetail(null);
-    }
-  }
-
-  async function handleFinalizeReserveSvg(option: StudioLogoOption) {
-    clearError();
-    setBusyDetail("A gerar as 5 variantes vectoriais de reserva…");
-    try {
-      const res = await fetch("/api/logotipo-raiz", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          acao: "finalizar",
-          chosenOption: option,
-          questionario: {
-            nome: dados.nome,
-            slogan: dados.slogan,
-            sector: dados.sector,
-            tresPalavras,
-            coresPreferidas,
-            coresEvitar,
-            referencias,
-          },
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        setFailure(data.error || "Não foi possível finalizar o vetor SVG.");
-        return;
-      }
-      setVariantesFinaisA(data.variantes);
-      setDraft(data.draft);
-      setPropostas(data.propostas || []);
-      if (data.propostas?.length > 0) handleSelectProposal(data.propostas[0]);
-      applySectorDefaultStyles(dados.sector);
-      setStep("paleta");
-    } catch {
-      setFailure("Erro ao produzir variantes SVG.");
-    } finally {
-      setBusyDetail(null);
-    }
-  }
-
-  // Carregar pré-visualizações das capas em camadas (1 Moderna + 1 Clássica ou catálogo 6)
-  const fetchCoverPreviews = useCallback(
-    async (opts?: { round?: number; listAll?: boolean }) => {
+  // Carregar par de propostas (1 Moderna em camadas + 1 Clássica) no Passo 5
+  const fetchPropostasVisuais = useCallback(
+    async (opts?: { redeId?: RedeSocialId; regenerar?: boolean }) => {
       if (!draft?.id) return;
-      const roundTarget = opts?.round ?? capaRound;
-      const listAllTarget = opts?.listAll ?? showAllCapas;
-      setCapasLoading(true);
+      const targetRede = opts?.redeId ?? activePropostaRedeId;
+
+      if (propostasAbortRef.current) {
+        propostasAbortRef.current.abort();
+      }
+      const controller = new AbortController();
+      propostasAbortRef.current = controller;
+      const reqSeq = ++propostasReqSeqRef.current;
+
+      setPropostasLoading(true);
       clearError();
 
       try {
         const res = await fetch("/api/capas", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
           body: JSON.stringify({
             draftId: draft.id,
-            dados,
+            dados: { ...dados, tom },
             paleta: {
               primaria: customPalette.primaria.hex,
               secundaria: customPalette.secundaria.hex,
               papel: customPalette.papel.hex,
               tinta: customPalette.tinta.hex,
             },
-            fontPairId: selectedFontPair,
-            round: roundTarget,
-            listAll: listAllTarget,
-            photoDataUrl: photoDataUrl || undefined,
+            redeId: targetRede,
+            regenerar: Boolean(opts?.regenerar),
           }),
         });
         const data = await res.json();
+        if (reqSeq !== propostasReqSeqRef.current) return;
         if (!res.ok || !data.ok) {
           setFailure(
-            data.error || "Não foi possível compor as capas em camadas.",
-            () => fetchCoverPreviews(opts)
+            data.error ||
+              "Não foi possível gerar as propostas visuais com o logótipo escolhido.",
+            () => fetchPropostasVisuais(opts)
           );
           return;
         }
-        setCapasPreviews(data.layouts || []);
-        if (
-          data.layouts?.length > 0 &&
-          !data.layouts.some(
-            (item: CapaPreviewItem) => item.spec.id === selectedCoverLayoutRef.current
-          )
-        ) {
-          const firstSpec = data.layouts[0].spec;
-          setSelectedCoverLayoutId(firstSpec.id);
-          setKitStyle(firstSpec.estiloSugerido);
-          setStyleOverrides((stPrev) => ({
-            ...stPrev,
-            capas: firstSpec.estiloSugerido,
-          }));
-        }
-      } catch {
-        setFailure("Falha de rede ao renderizar as pré-visualizações de capas.", () =>
-          fetchCoverPreviews(opts)
+        setPropostasPecas(data.propostas || []);
+        if (data.avisoTextos) setPropostasAvisoTextos(data.avisoTextos);
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return;
+        if (reqSeq !== propostasReqSeqRef.current) return;
+        setFailure("Falha de rede ao gerar as propostas visuais.", () =>
+          fetchPropostasVisuais(opts)
         );
       } finally {
-        setCapasLoading(false);
+        if (reqSeq === propostasReqSeqRef.current) {
+          setPropostasLoading(false);
+        }
       }
     },
     [
-      capaRound,
+      activePropostaRedeId,
       clearError,
       customPalette.papel.hex,
       customPalette.primaria.hex,
@@ -1153,30 +936,72 @@ export function KitStudioWizard() {
       customPalette.tinta.hex,
       dados,
       draft?.id,
-      photoDataUrl,
-      selectedFontPair,
       setFailure,
-      showAllCapas,
+      tom,
     ]
   );
 
-  // Sempre que entra no passo `capas`, carrega automaticamente as 2 propostas (1 moderna + 1 clássica)
-  useEffect(() => {
-    if (step === "capas" && draft?.id) {
-      fetchCoverPreviews({ round: capaRound, listAll: showAllCapas });
-    }
-  }, [step, draft?.id, capaRound, showAllCapas, fetchCoverPreviews]);
+  // Regenerar apenas uma das propostas no Passo 5 (Moderna OU Clássica)
+  async function handleRegenerateSingleProposta(targetEstilo: "moderno" | "classico") {
+    if (!draft?.id || propostasLoading) return;
+    const requestedRede = activePropostaRedeId;
+    const seqAtStart = propostasReqSeqRef.current;
+    setRegeneratingEstilo(targetEstilo);
+    clearError();
 
-  // Gerar os 36 ficheiros e o ZIP final
+    try {
+      const res = await fetch("/api/capas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          draftId: draft.id,
+          dados: { ...dados, tom },
+          paleta: {
+            primaria: customPalette.primaria.hex,
+            secundaria: customPalette.secundaria.hex,
+            papel: customPalette.papel.hex,
+            tinta: customPalette.tinta.hex,
+          },
+          redeId: requestedRede,
+          apenasUmEstilo: true,
+          estiloVisual: targetEstilo,
+          regenerar: true,
+        }),
+      });
+      const data = await res.json();
+      if (seqAtStart !== propostasReqSeqRef.current) return;
+      if (!res.ok || !data.ok || !data.propostas?.[0]) {
+        setFailure(data.error || "Não foi possível regenerar esta proposta.");
+        return;
+      }
+      const nova = data.propostas[0] as PecaPropostaPreview;
+      setPropostasPecas((prev) =>
+        prev.map((item) => (item.estiloVisual === targetEstilo ? nova : item))
+      );
+    } catch {
+      setFailure("Falha de comunicação ao regenerar a proposta.");
+    } finally {
+      setRegeneratingEstilo(null);
+    }
+  }
+
+  // Carrega automaticamente quando entra no Passo 5 ou muda o formato social em pré-visualização
+  useEffect(() => {
+    if (step === "propostas" && draft?.id) {
+      fetchPropostasVisuais({ redeId: activePropostaRedeId });
+    }
+  }, [step, draft?.id, activePropostaRedeId, fetchPropostasVisuais]);
+
+  // Gerar os 38 ficheiros e o ZIP final
   async function handleGenerateFullKit() {
     if (!draft) {
-      setFailure("Falta confirmar o logótipo antes de gerar o kit final.");
+      setFailure("Falta escolher ou analisar o logótipo antes de gerar os 38 ficheiros.");
       return;
     }
 
     clearError();
     setBusyDetail(
-      "A compor os 36 formatos oficiais (PNG, ICO, HTML, SVG, PDF) e a empacotar o arquivo ZIP…"
+      "A gerar todas as 18 peças sociais com o logótipo como referência, a validar zonas seguras e a empacotar os 38 ficheiros no ZIP…"
     );
     try {
       const res = await fetch("/api/gerar", {
@@ -1184,7 +1009,7 @@ export function KitStudioWizard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           draftId: draft.id,
-          dados,
+          dados: { ...dados, tom },
           paleta: {
             primaria: customPalette.primaria.hex,
             secundaria: customPalette.secundaria.hex,
@@ -1193,7 +1018,8 @@ export function KitStudioWizard() {
           },
           fontPairId: selectedFontPair,
           kitStyle,
-          coverLayoutId: selectedCoverLayoutId,
+          estiloVisual,
+          usarVetorizacaoOpcional,
           styleOverrides,
           photoDataUrl: photoDataUrl || undefined,
         }),
@@ -1202,7 +1028,7 @@ export function KitStudioWizard() {
       const data = await res.json();
       if (!res.ok || !data.ok) {
         setFailure(
-          data.error || "Não foi possível gerar os 36 ficheiros do kit.",
+          data.error || "Não foi possível gerar os 38 ficheiros do kit.",
           handleGenerateFullKit
         );
         if (data.code === "expired_draft") {
@@ -1212,6 +1038,7 @@ export function KitStudioWizard() {
       }
 
       setGeneratedKit(data.kit);
+      setCacheBusters({});
       setStep("previsualizacao");
     } catch {
       setFailure(
@@ -1223,20 +1050,55 @@ export function KitStudioWizard() {
     }
   }
 
+  // Regenerar uma peça social individual já dentro do kit gerado (Passo 6)
+  async function handleRegenerateKitPiece(redeId: RedeSocialId) {
+    if (!generatedKit) return;
+    setRegeneratingRedeId(redeId);
+    clearError();
+
+    try {
+      const res = await fetch(`/api/kits/${generatedKit.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          acao: "regenerar",
+          redeId,
+          estiloVisual,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setFailure(data.error || "Não foi possível regenerar a peça selecionada.");
+        return;
+      }
+      if (data.kit) {
+        setGeneratedKit(data.kit);
+      }
+      const cfg = REDES_SOCIAIS_CONFIG[redeId];
+      setCacheBusters((prev) => ({
+        ...prev,
+        [cfg.ficheiro]: Date.now(),
+      }));
+    } catch {
+      setFailure("Erro de ligação ao regenerar a peça do kit.");
+    } finally {
+      setRegeneratingRedeId(null);
+    }
+  }
+
   const maxStepReachedIdx = useMemo(() => {
     const idx = WIZARD_STEPS.findIndex((s) => s.id === step);
     let maxIdx = idx;
-    if (generatedKit) maxIdx = Math.max(maxIdx, 7);
-    else if (draft) maxIdx = Math.max(maxIdx, 5);
-    else if (vetorState) maxIdx = Math.max(maxIdx, 3);
-    else if (propostasIA || draft) maxIdx = Math.max(maxIdx, 2);
+    if (generatedKit) maxIdx = Math.max(maxIdx, 6);
+    else if (draft) maxIdx = Math.max(maxIdx, 4);
+    else if (propostasIA) maxIdx = Math.max(maxIdx, 2);
     else if (entitlement) maxIdx = Math.max(maxIdx, 1);
     return maxIdx;
-  }, [step, generatedKit, draft, vetorState, propostasIA, entitlement]);
+  }, [step, generatedKit, draft, propostasIA, entitlement]);
 
-  const needsPhotoForNonCover = (
-    ["publicacao", "story", "cartao", "papel"] as const
-  ).some((g) => styleOverrides[g] === "fotografia");
+  const needsPhotoForStationery = (["cartao", "papel"] as const).some(
+    (g) => styleOverrides[g] === "fotografia"
+  );
 
   if (authChecking) {
     return (
@@ -1249,9 +1111,11 @@ export function KitStudioWizard() {
     );
   }
 
+  const activePropostaRede = REDES_SOCIAIS_CONFIG[activePropostaRedeId];
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8 space-y-6 overflow-x-clip">
-      {/* Barra superior: direito de acesso + modo de imagem + ações */}
+      {/* Barra superior: direito de acesso + modelo/modo de imagem + ações */}
       {entitlement && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-2xs sm:px-5">
           <div className="flex flex-wrap items-center gap-2.5">
@@ -1272,7 +1136,13 @@ export function KitStudioWizard() {
 
             <span className="inline-flex items-center gap-1.5 rounded-full border border-stone-200 bg-[#FAF7F2] px-3 py-1 text-xs font-semibold text-stone-700">
               <Sparkles className="h-3.5 w-3.5 text-amber-800 shrink-0" />
-              <span>{imagemConfig.etiquetaModo}</span>
+              <span>
+                {imagemConfig.etiquetaModo} • {imagemConfig.modelo}
+              </span>
+            </span>
+
+            <span className="inline-flex items-center rounded-full bg-stone-100 px-2.5 py-1 text-xs font-semibold text-stone-800">
+              Tom: {TOM_DA_MARCA_SPECS[tom].nome}
             </span>
 
             {dados.nome && (
@@ -1303,10 +1173,13 @@ export function KitStudioWizard() {
         </div>
       )}
 
-      {/* Barra passo a passo (Stepper acessível responsivo) */}
+      {/* Barra passo a passo (7 passos) */}
       {entitlement && (
-        <nav aria-label="Passos do assistente PandoMarca" className="rounded-2xl border border-stone-200 bg-white p-3 shadow-2xs">
-          <ol className="grid grid-cols-2 gap-1.5 sm:grid-cols-4 lg:grid-cols-8">
+        <nav
+          aria-label="Passos do assistente PandoMarca"
+          className="rounded-2xl border border-stone-200 bg-white p-3 shadow-2xs"
+        >
+          <ol className="grid grid-cols-2 gap-1.5 sm:grid-cols-4 lg:grid-cols-7">
             {WIZARD_STEPS.map((stMeta, idx) => {
               const isCurrent = step === stMeta.id;
               const isDone = idx < WIZARD_STEPS.findIndex((s) => s.id === step);
@@ -1354,7 +1227,7 @@ export function KitStudioWizard() {
         </nav>
       )}
 
-      {/* Banner de erro com «Tentar de novo» sem perder progresso */}
+      {/* Banner de erro com «Tentar de novo» */}
       {globalError && (
         <div
           role="alert"
@@ -1391,7 +1264,7 @@ export function KitStudioWizard() {
         </div>
       )}
 
-      {/* Indicador explícito de espera sem perder contexto */}
+      {/* Indicador de progresso */}
       {busyDetail && (
         <div
           role="status"
@@ -1400,7 +1273,7 @@ export function KitStudioWizard() {
         >
           <Loader2 className="h-5 w-5 animate-spin text-amber-800 shrink-0" />
           <div>
-            <p className="text-sm font-bold">A criar as tuas propostas…</p>
+            <p className="text-sm font-bold">A preparar as peças por geração de imagem…</p>
             <p className="text-xs text-amber-900 mt-0.5">{busyDetail}</p>
           </div>
         </div>
@@ -1417,7 +1290,7 @@ export function KitStudioWizard() {
             </div>
             <div>
               <span className="text-xs font-bold uppercase tracking-wider text-amber-800">
-                Passo 1 de 8 • Porta de Acesso
+                Passo 1 de 7 • Porta de Acesso
               </span>
               <h1 className="text-2xl font-bold text-stone-950">
                 Introduza o seu código PandoMarca
@@ -1440,7 +1313,8 @@ export function KitStudioWizard() {
             <>
               <div className="rounded-2xl border border-stone-200 bg-[#FAF7F2] p-4 text-xs text-stone-700 leading-relaxed flex flex-wrap items-center justify-between gap-2">
                 <p>
-                  Aceita códigos <strong>Oferta Website PandoWeb</strong> ou <strong>Produto Individual</strong> (preço a definir). Ambos produzem exatamente o mesmo kit de 36 ficheiros.
+                  Aceita códigos <strong>Oferta Website PandoWeb</strong> ou{" "}
+                  <strong>Produto Individual</strong> (preço a definir). Ambos entregam o mesmo kit de 38 ficheiros.
                 </p>
                 <span className="inline-flex items-center rounded-full border border-stone-200 bg-white px-2.5 py-0.5 text-[11px] font-semibold text-stone-600 shrink-0">
                   {imagemConfig.etiquetaModo}
@@ -1480,7 +1354,7 @@ export function KitStudioWizard() {
                   {authLoading ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      <span>A criar as tuas propostas…</span>
+                      <span>A validar código…</span>
                     </>
                   ) : (
                     <>
@@ -1526,20 +1400,20 @@ export function KitStudioWizard() {
       )}
 
       {/* =====================================================================
-          PASSO 2: DADOS DO NEGÓCIO E PONTO DE PARTIDA (ENTRADA A ou B)
+          PASSO 2: DADOS DO NEGÓCIO E TOM DA MARCA
       ===================================================================== */}
       {step === "dados" && (
         <section className="rounded-3xl border border-stone-200 bg-white p-6 sm:p-10 shadow-xs space-y-8">
           <div className="flex flex-wrap items-start justify-between gap-4 border-b border-stone-200 pb-6">
             <div className="space-y-1 max-w-2xl">
               <p className="text-xs font-bold uppercase tracking-widest text-amber-800">
-                Passo 2 de 8 • Dados do Negócio
+                Passo 2 de 7 • Dados e Tom da Marca
               </p>
               <h1 className="text-2xl font-bold text-stone-950 sm:text-3xl">
-                Conte-nos sobre a sua marca
+                Conte-nos sobre a sua marca e defina o tom visual
               </h1>
               <p className="text-sm text-stone-600">
-                Todos os campos são usados apenas se preenchidos — campos vazios são omitidos automaticamente nas capas, cartões e papel de carta (sem textos nem números inventados).
+                Os prompts de geração de imagem nascem do tom selecionado e do sector. Os textos pedidos nas peças sociais usam apenas os campos preenchidos (sem textos nem contactos inventados).
               </p>
             </div>
 
@@ -1564,10 +1438,10 @@ export function KitStudioWizard() {
             </div>
           </div>
 
-          {/* Escolha da entrada (A ou B) com botões acessíveis */}
+          {/* Escolha da entrada A ou B */}
           <div className="space-y-2.5">
             <span className="block text-xs font-bold uppercase tracking-wider text-stone-700">
-              Como prefere começar o logótipo?
+              Como prefere obter o logótipo de referência?
             </span>
             <div className="grid gap-4 md:grid-cols-2">
               <button
@@ -1583,13 +1457,13 @@ export function KitStudioWizard() {
               >
                 <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-950">
                   <PenTool className="h-3.5 w-3.5" />
-                  Entrada A — Criar logótipo de raiz
+                  Entrada A — Criar logótipo de raiz por IA
                 </span>
                 <span className="text-base font-bold text-stone-950">
-                  Comparar 2 propostas distintas e afinar o desenho
+                  Comparar 2 propostas por ronda e escolher a referência oficial
                 </span>
                 <span className="text-xs text-stone-600 leading-relaxed">
-                  Gera 2 propostas diferentes por ronda (clássica com símbolo vs moderna tipográfica), permite ajustar e vetoriza em SVG limpo até 8 cores.
+                  Gera 2 propostas de logótipo com base no tom da marca ({imagemConfig.modelo}), permite afinar e define a escolhida como referência obrigatória de todas as peças.
                 </span>
               </button>
 
@@ -1609,19 +1483,68 @@ export function KitStudioWizard() {
                   Entrada B — Usar logótipo já existente
                 </span>
                 <span className="text-base font-bold text-stone-950">
-                  Carregar PNG, JPG ou SVG e limpar fundo / vetorizar
+                  Carregar PNG, JPG ou SVG como referência obrigatória
                 </span>
                 <span className="text-xs text-stone-600 leading-relaxed">
-                  Analisa o ficheiro carregado, remove margens lisas automaticamente, permite vetorizar ou extrair paleta e avança para o mesmo kit.
+                  Limpa fundos lisos da margem, extrai a paleta cromática e usa o seu logótipo diretamente como imagem de referência para capas, avatares e publicações.
                 </span>
               </button>
+            </div>
+          </div>
+
+          {/* Seletor de Tom da Marca (6 tons oficiais) */}
+          <div className="space-y-3">
+            <div>
+              <span className="block text-xs font-bold uppercase tracking-wider text-stone-700">
+                Tom visual da marca * (guia os prompts de logótipo, avatares e capas)
+              </span>
+              <p className="mt-0.5 text-xs text-stone-600">
+                {TOM_DA_MARCA_SPECS[tom].direcaoEstetica}
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {TONS_DA_MARCA_LIST.map((t) => {
+                const isSelected = tom === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    id={`btn-tom-${t.id}`}
+                    aria-pressed={isSelected}
+                    onClick={() => {
+                      setTom(t.id);
+                      setDados((prev) => ({ ...prev, tom: t.id }));
+                    }}
+                    className={`flex flex-col items-start gap-1.5 rounded-2xl border-2 p-4 text-left transition focus-visible:outline-2 focus-visible:outline-stone-900 ${
+                      isSelected
+                        ? "border-stone-950 bg-stone-900 text-stone-50 shadow-xs"
+                        : "border-stone-200 bg-[#FAF7F2] text-stone-900 hover:border-stone-400"
+                    }`}
+                  >
+                    <div className="flex w-full items-center justify-between">
+                      <span className="text-sm font-bold">{t.nome}</span>
+                      {isSelected && <Check className="h-4 w-4 text-amber-300" />}
+                    </div>
+                    <span
+                      className={`text-xs leading-snug ${
+                        isSelected ? "text-stone-300" : "text-stone-600"
+                      }`}
+                    >
+                      {t.resumo}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
           {/* Formulário principal */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <div>
-              <label htmlFor="input-nome" className="block text-xs font-bold uppercase tracking-wider text-stone-700">
+              <label
+                htmlFor="input-nome"
+                className="block text-xs font-bold uppercase tracking-wider text-stone-700"
+              >
                 Nome da marca *
               </label>
               <input
@@ -1636,7 +1559,10 @@ export function KitStudioWizard() {
             </div>
 
             <div>
-              <label htmlFor="select-sector" className="block text-xs font-bold uppercase tracking-wider text-stone-700">
+              <label
+                htmlFor="select-sector"
+                className="block text-xs font-bold uppercase tracking-wider text-stone-700"
+              >
                 Sector de atividade *
               </label>
               <select
@@ -1658,7 +1584,10 @@ export function KitStudioWizard() {
             </div>
 
             <div>
-              <label htmlFor="input-slogan" className="block text-xs font-bold uppercase tracking-wider text-stone-700">
+              <label
+                htmlFor="input-slogan"
+                className="block text-xs font-bold uppercase tracking-wider text-stone-700"
+              >
                 Slogan (opcional)
               </label>
               <input
@@ -1672,7 +1601,10 @@ export function KitStudioWizard() {
             </div>
 
             <div>
-              <label htmlFor="input-servicos" className="block text-xs font-semibold text-stone-700">
+              <label
+                htmlFor="input-servicos"
+                className="block text-xs font-semibold text-stone-700"
+              >
                 Serviços / Descrição curta
               </label>
               <input
@@ -1686,7 +1618,10 @@ export function KitStudioWizard() {
             </div>
 
             <div>
-              <label htmlFor="input-morada" className="block text-xs font-semibold text-stone-700">
+              <label
+                htmlFor="input-morada"
+                className="block text-xs font-semibold text-stone-700"
+              >
                 Morada / Localidade
               </label>
               <input
@@ -1700,7 +1635,10 @@ export function KitStudioWizard() {
             </div>
 
             <div>
-              <label htmlFor="input-website" className="block text-xs font-semibold text-stone-700">
+              <label
+                htmlFor="input-website"
+                className="block text-xs font-semibold text-stone-700"
+              >
                 Website
               </label>
               <input
@@ -1714,7 +1652,10 @@ export function KitStudioWizard() {
             </div>
 
             <div>
-              <label htmlFor="input-email" className="block text-xs font-semibold text-stone-700">
+              <label
+                htmlFor="input-email"
+                className="block text-xs font-semibold text-stone-700"
+              >
                 Email
               </label>
               <input
@@ -1728,7 +1669,10 @@ export function KitStudioWizard() {
             </div>
 
             <div>
-              <label htmlFor="input-telefone" className="block text-xs font-semibold text-stone-700">
+              <label
+                htmlFor="input-telefone"
+                className="block text-xs font-semibold text-stone-700"
+              >
                 Telefone
               </label>
               <input
@@ -1742,7 +1686,10 @@ export function KitStudioWizard() {
             </div>
 
             <div>
-              <label htmlFor="input-nif" className="block text-xs font-semibold text-stone-700">
+              <label
+                htmlFor="input-nif"
+                className="block text-xs font-semibold text-stone-700"
+              >
                 NIF (mostrado se preenchido)
               </label>
               <input
@@ -1756,7 +1703,10 @@ export function KitStudioWizard() {
             </div>
 
             <div>
-              <label htmlFor="input-pessoa" className="block text-xs font-semibold text-stone-700">
+              <label
+                htmlFor="input-pessoa"
+                className="block text-xs font-semibold text-stone-700"
+              >
                 Pessoa de contacto
               </label>
               <input
@@ -1770,7 +1720,10 @@ export function KitStudioWizard() {
             </div>
 
             <div>
-              <label htmlFor="input-cargo" className="block text-xs font-semibold text-stone-700">
+              <label
+                htmlFor="input-cargo"
+                className="block text-xs font-semibold text-stone-700"
+              >
                 Cargo
               </label>
               <input
@@ -1784,30 +1737,46 @@ export function KitStudioWizard() {
             </div>
           </div>
 
-          <label className="flex items-center gap-3 rounded-xl border border-stone-200 bg-[#FAF7F2] p-3.5 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={dados.simbolo}
-              onChange={(e) => setDados({ ...dados, simbolo: e.target.checked })}
-              className="h-4 w-4 rounded border-stone-300 text-stone-900"
-            />
-            <span className="text-xs font-medium text-stone-800">
-              O logótipo principal é apenas um símbolo (sem o nome escrito) — mostrar o nome da marca nas capas e na variante horizontal
-            </span>
-          </label>
+          <div className="space-y-3">
+            <label className="flex items-center gap-3 rounded-xl border border-stone-200 bg-[#FAF7F2] p-3.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={dados.simbolo}
+                onChange={(e) => setDados({ ...dados, simbolo: e.target.checked })}
+                className="h-4 w-4 rounded border-stone-300 text-stone-900"
+              />
+              <span className="text-xs font-medium text-stone-800">
+                O logótipo principal é apenas um símbolo (sem o nome escrito) — compor o nome junto ao símbolo na variante horizontal
+              </span>
+            </label>
 
-          {/* Campos criativos adicionais para Entrada A */}
+            <label className="flex items-start gap-3 rounded-xl border border-stone-200 bg-[#FAF7F2] p-3.5 cursor-pointer">
+              <input
+                type="checkbox"
+                id="chk-vetorizacao-opcional"
+                checked={usarVetorizacaoOpcional}
+                onChange={(e) => setUsarVetorizacaoOpcional(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-stone-300 text-stone-900"
+              />
+              <span className="text-xs text-stone-800">
+                <strong className="block font-bold text-stone-950">
+                  Ativar vetorização local opcional (apenas para favicon e PDFs de impressão)
+                </strong>
+                As 18 peças de redes sociais (perfis, capas, publicações e stories) são sempre geradas por imagem pura sem vetores por código. Se ativar esta opção, apenas o favicon e os PDFs de cartão/papel de carta utilizam traçado vetorial local.
+              </span>
+            </label>
+          </div>
+
+          {/* Campos criativos para Entrada A */}
           {entradaEscolhida === "A" && (
-            <div className="rounded-2xl border border-stone-200 bg-[#FAF7F2] p-5 space-y-5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h2 className="text-sm font-bold uppercase tracking-wider text-stone-800">
-                    Direção criativa e referências (Entrada A)
-                  </h2>
-                  <p className="text-xs text-stone-600">
-                    O estúdio cria um logótipo limpo apenas com o nome da marca ou símbolo puro (nunca slogans nem fundos cheios de texto).
-                  </p>
-                </div>
+            <div className="rounded-2xl border border-stone-200 bg-[#FAF7F2] p-5 space-y-4">
+              <div>
+                <h2 className="text-sm font-bold uppercase tracking-wider text-stone-800">
+                  Direção para os prompts de logótipo (Entrada A)
+                </h2>
+                <p className="text-xs text-stone-600">
+                  Usado em conjunto com o tom «{TOM_DA_MARCA_SPECS[tom].nome}» para gerar 2 propostas de logótipo por ronda.
+                </p>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-3">
@@ -1848,96 +1817,29 @@ export function KitStudioWizard() {
                   />
                 </div>
               </div>
-
-              <div className="space-y-2.5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-stone-700">
-                    Imagens de referência opcionais ({referencias.length} / 5)
-                  </span>
-                  {referencias.length < 5 && (
-                    <label className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-bold text-stone-900 hover:bg-stone-100">
-                      <Plus className="h-3.5 w-3.5" />
-                      <span>Adicionar imagem</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        onChange={(e) => handleAddReferenceFiles(e.target.files)}
-                        className="hidden"
-                      />
-                    </label>
-                  )}
-                </div>
-
-                {referencias.length > 0 && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {referencias.map((ref, idx) => (
-                      <div
-                        key={idx}
-                        className="flex gap-3 rounded-xl border border-stone-200 bg-white p-3"
-                      >
-                        {ref.dataUrl && (
-                          <img
-                            src={ref.dataUrl}
-                            alt={ref.nomeFicheiro || `Referência ${idx + 1}`}
-                            className="h-14 w-14 rounded-lg border border-stone-200 object-contain shrink-0"
-                          />
-                        )}
-                        <div className="flex-1 min-w-0 space-y-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="truncate text-xs font-bold text-stone-800">
-                              {ref.nomeFicheiro}
-                            </span>
-                            <button
-                              type="button"
-                              aria-label="Remover referência"
-                              onClick={() =>
-                                setReferencias(referencias.filter((_, i) => i !== idx))
-                              }
-                              className="text-stone-400 hover:text-red-700"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                          <input
-                            type="text"
-                            value={ref.nota}
-                            onChange={(e) => {
-                              const next = [...referencias];
-                              next[idx] = { ...next[idx], nota: e.target.value };
-                              setReferencias(next);
-                            }}
-                            className="w-full rounded-lg border border-stone-200 bg-[#FAF7F2] px-2 py-1 text-xs"
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
             </div>
           )}
 
-          {/* Ações para avançar ao Passo 3 */}
+          {/* Ações para avançar */}
           <div className="flex flex-wrap items-center justify-between gap-4 border-t border-stone-200 pt-6">
             <span className="text-xs text-stone-500">
               Progresso guardado automaticamente nesta sessão.
             </span>
 
             {entradaEscolhida === "A" ? (
-              <div className="flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  id="btn-avancar-logotipo-ia"
-                  disabled={Boolean(busyDetail)}
-                  onClick={() => executeLogoRound(1)}
-                  className="inline-flex items-center gap-2 rounded-xl bg-stone-900 px-6 py-3.5 text-sm font-semibold text-stone-50 shadow-xs transition hover:bg-stone-800 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-stone-900"
-                >
-                  <Wand2 className="h-4 w-4 text-amber-300" />
-                  <span>Gerar 2 Propostas de Logótipo (Ronda 1/{imagemConfig.maxRondas})</span>
-                  <ArrowRight className="h-4 w-4" />
-                </button>
-              </div>
+              <button
+                type="button"
+                id="btn-avancar-logotipo-ia"
+                disabled={Boolean(busyDetail)}
+                onClick={() => executeLogoRound(1)}
+                className="inline-flex items-center gap-2 rounded-xl bg-stone-900 px-6 py-3.5 text-sm font-semibold text-stone-50 shadow-xs transition hover:bg-stone-800 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-stone-900"
+              >
+                <Wand2 className="h-4 w-4 text-amber-300" />
+                <span>
+                  Gerar 2 Propostas de Logótipo (Ronda 1/{imagemConfig.maxRondas})
+                </span>
+                <ArrowRight className="h-4 w-4" />
+              </button>
             ) : (
               <button
                 type="button"
@@ -1952,7 +1854,7 @@ export function KitStudioWizard() {
                 }}
                 className="inline-flex items-center gap-2 rounded-xl bg-stone-900 px-6 py-3.5 text-sm font-semibold text-stone-50 shadow-xs transition hover:bg-stone-800 focus-visible:outline-2 focus-visible:outline-stone-900"
               >
-                <span>Avançar para Carregar Logótipo Existente</span>
+                <span>Avançar para Carregar Logótipo de Referência</span>
                 <ArrowRight className="h-4 w-4" />
               </button>
             )}
@@ -1961,24 +1863,27 @@ export function KitStudioWizard() {
       )}
 
       {/* =====================================================================
-          PASSO 3: LOGÓTIPO (ENTRADA A COM IA + CONTADORES, OU ENTRADA B UPLOAD)
+          PASSO 3: LOGÓTIPO POR GERAÇÃO DE IMAGEM (ENTRADA A ou ENTRADA B)
       ===================================================================== */}
       {step === "logotipo" && (
         <section className="space-y-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="space-y-1">
               <p className="text-xs font-bold uppercase tracking-widest text-amber-800">
-                Passo 3 de 8 • {entradaEscolhida === "A" ? "Propostas de Logótipo" : "Carregar Logótipo Existente"}
+                Passo 3 de 7 •{" "}
+                {entradaEscolhida === "A"
+                  ? "Logótipo de Raiz por Imagem"
+                  : "Logótipo Existente (Referência Obrigatória)"}
               </p>
               <h1 className="text-2xl font-bold text-stone-950 sm:text-3xl">
                 {entradaEscolhida === "A"
-                  ? "Duas propostas distintas de logótipo"
-                  : "Carregue ou analise o seu logótipo existente"}
+                  ? "Escolha o logótipo de referência da marca"
+                  : "Carregue o seu logótipo para referência das peças visuais"}
               </h1>
               <p className="text-sm text-stone-600">
                 {entradaEscolhida === "A"
-                  ? "Compare uma proposta clássica com símbolo contra uma moderna tipográfica. Pode escolher já para vetorizar, pedir ajuste ou pedir outra ronda."
-                  : "Carregue PNG, JPG ou SVG até 8 MB. Pode vetorizar e confirmar o desenho vetorial ou avançar diretamente."}
+                  ? `Gerado no tom «${TOM_DA_MARCA_SPECS[tom].nome}». O logótipo que escolher torna-se imagem de referência obrigatória em todas as capas, perfis, publicações e stories seguintes.`
+                  : "O ficheiro carregado é limpo na margem exterior e usado diretamente como imagem de referência obrigatória em todas as peças de redes sociais."}
               </p>
             </div>
 
@@ -1989,68 +1894,50 @@ export function KitStudioWizard() {
                 className="inline-flex items-center gap-1.5 rounded-xl border border-stone-300 bg-white px-4 py-2.5 text-xs font-semibold text-stone-700 hover:bg-stone-100"
               >
                 <ArrowLeft className="h-4 w-4" />
-                <span>Dados do negócio</span>
+                <span>Dados e Tom</span>
               </button>
 
-              {entradaEscolhida === "A" && !usarReservaSvg && (
-                <>
-                  <button
-                    type="button"
-                    id="btn-outra-ronda"
-                    disabled={
-                      Boolean(busyDetail) ||
-                      rondaAtual >= imagemConfig.maxRondas ||
-                      Boolean(orcamento?.bloqueado)
-                    }
-                    onClick={() => executeLogoRound(rondaAtual + 1)}
-                    className="inline-flex items-center gap-2 rounded-xl border-2 border-stone-900 bg-[#FAF7F2] px-4 py-2.5 text-xs font-bold text-stone-950 transition hover:bg-stone-900 hover:text-stone-50 disabled:cursor-not-allowed disabled:opacity-45"
-                  >
-                    <RefreshCw className="h-3.5 w-3.5" />
-                    <span>
-                      {rondaAtual >= imagemConfig.maxRondas
-                        ? `Limite de rondas (${rondaAtual}/${imagemConfig.maxRondas})`
-                        : `Outra ronda (${rondaAtual + 1}/${imagemConfig.maxRondas})`}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    id="btn-abrir-reserva-svg"
-                    onClick={handleGenerateDirectionsReserve}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-stone-300 bg-white px-3.5 py-2.5 text-xs font-semibold text-stone-700 hover:bg-stone-100"
-                  >
-                    <SlidersHorizontal className="h-3.5 w-3.5" />
-                    <span>Compositor vetorial clássico</span>
-                  </button>
-                </>
+              {entradaEscolhida === "A" && (
+                <button
+                  type="button"
+                  id="btn-outra-ronda"
+                  disabled={
+                    Boolean(busyDetail) ||
+                    rondaAtual >= imagemConfig.maxRondas ||
+                    Boolean(orcamento?.bloqueado)
+                  }
+                  onClick={() => executeLogoRound(rondaAtual + 1)}
+                  className="inline-flex items-center gap-2 rounded-xl border-2 border-stone-900 bg-[#FAF7F2] px-4 py-2.5 text-xs font-bold text-stone-950 transition hover:bg-stone-900 hover:text-stone-50 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  <span>
+                    {rondaAtual >= imagemConfig.maxRondas
+                      ? `Limite de rondas (${rondaAtual}/${imagemConfig.maxRondas})`
+                      : `Outra ronda (${rondaAtual + 1}/${imagemConfig.maxRondas})`}
+                  </span>
+                </button>
               )}
             </div>
           </div>
 
-          {/* Contadores visíveis de rondas e ajustes */}
-          {entradaEscolhida === "A" && !usarReservaSvg && (
-            <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-stone-200 bg-white px-5 py-3.5 text-xs">
-              <span className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-3 py-1 font-bold text-amber-300">
-                Ronda {rondaAtual} de {imagemConfig.maxRondas}
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-100 px-3 py-1 font-bold text-amber-950">
-                Ajustes: {ajustesUsados} / {imagemConfig.maxAjustes}
-              </span>
-              {imagemConfig.semCustosReais && (
-                <span className="inline-flex items-center rounded-full border border-stone-200 bg-[#FAF7F2] px-2.5 py-0.5 font-semibold text-stone-600">
-                  {imagemConfig.etiquetaModo}
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* MODO PRINCIPAL ENTRADA A: 2 Propostas IA Lado a Lado */}
-          {entradaEscolhida === "A" && !usarReservaSvg && (
+          {entradaEscolhida === "A" && (
             <>
+              <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-stone-200 bg-white px-5 py-3.5 text-xs">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-3 py-1 font-bold text-amber-300">
+                  Ronda {rondaAtual} de {imagemConfig.maxRondas}
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-100 px-3 py-1 font-bold text-amber-950">
+                  Ajustes: {ajustesUsados} / {imagemConfig.maxAjustes}
+                </span>
+                <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 font-bold text-emerald-950">
+                  Tom ativo: {TOM_DA_MARCA_SPECS[tom].nome}
+                </span>
+              </div>
+
               {!propostasIA ? (
                 <div className="rounded-3xl border border-stone-200 bg-white p-10 text-center space-y-4">
                   <p className="text-sm text-stone-700">
-                    Clique abaixo para gerar as duas primeiras propostas distintas para{" "}
+                    Clique abaixo para gerar as duas primeiras propostas de logótipo para{" "}
                     <strong>{dados.nome || "a sua marca"}</strong>.
                   </p>
                   <button
@@ -2077,8 +1964,8 @@ export function KitStudioWizard() {
                         className="flex flex-col justify-between rounded-3xl border-2 border-stone-200 bg-white p-6 shadow-xs transition hover:border-stone-400 space-y-5"
                       >
                         <div className="space-y-4">
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
                               <span
                                 className={`inline-block rounded-lg px-3 py-1 text-xs font-bold ${
                                   prop.estilo === "classico"
@@ -2088,17 +1975,16 @@ export function KitStudioWizard() {
                               >
                                 {prop.titulo}
                               </span>
-                              <h2 className="mt-2 text-lg font-bold text-stone-950">
+                              <h2 className="mt-2 text-base font-bold text-stone-950 sm:text-lg">
                                 {prop.subtitulo}
                               </h2>
                             </div>
-                            <span className="rounded-md border border-stone-200 bg-[#FAF7F2] px-2.5 py-1 text-[11px] font-semibold text-stone-600">
-                              Ronda {prop.ronda}
+                            <span className="shrink-0 whitespace-nowrap rounded-md border border-stone-200 bg-[#FAF7F2] px-2.5 py-1 text-[11px] font-semibold text-stone-600">
+                              Ronda {prop.ronda} • 1:1
                             </span>
                           </div>
 
-                          {/* Pré-visualização nítida sobre papel quente */}
-                          <div className="flex h-60 items-center justify-center rounded-2xl border border-stone-200 bg-[#FAF6F0] p-4 overflow-hidden">
+                          <div className="flex h-64 items-center justify-center rounded-2xl border border-stone-200 bg-[#FAF6F0] p-4 overflow-hidden">
                             <img
                               src={prop.imagemBase64}
                               alt={prop.titulo}
@@ -2110,7 +1996,6 @@ export function KitStudioWizard() {
                             {prop.racional}
                           </p>
 
-                          {/* Paleta e tipo associados */}
                           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-stone-200 bg-[#FAF7F2] px-3.5 py-2.5 text-xs">
                             <div className="flex items-center gap-1.5">
                               {[
@@ -2132,7 +2017,6 @@ export function KitStudioWizard() {
                             </span>
                           </div>
 
-                          {/* Caixa inline de ajuste */}
                           {isEditingThis && (
                             <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 space-y-3">
                               <label
@@ -2146,7 +2030,7 @@ export function KitStudioWizard() {
                                 type="text"
                                 value={ajusteInstrucao}
                                 onChange={(e) => setAjusteInstrucao(e.target.value)}
-                                placeholder="Ex.: aumentar contraste e reforçar contorno do arco"
+                                placeholder="Ex.: reforçar contraste e tornar o emblema mais nítido"
                                 className="w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-xs text-stone-950"
                               />
                               <div className="flex flex-wrap items-center gap-2">
@@ -2158,7 +2042,9 @@ export function KitStudioWizard() {
                                   className="inline-flex items-center gap-1.5 rounded-xl bg-amber-900 px-4 py-2 text-xs font-bold text-white hover:bg-amber-950"
                                 >
                                   <Check className="h-3.5 w-3.5" />
-                                  <span>Aplicar ajuste ({ajustesUsados + 1}/{imagemConfig.maxAjustes})</span>
+                                  <span>
+                                    Aplicar ajuste ({ajustesUsados + 1}/{imagemConfig.maxAjustes})
+                                  </span>
                                 </button>
                                 <button
                                   type="button"
@@ -2180,20 +2066,11 @@ export function KitStudioWizard() {
                             type="button"
                             id={`btn-escolher-ia-${idx}`}
                             disabled={Boolean(busyDetail)}
-                            onClick={() =>
-                              executeLocalVectorize({
-                                imagemBase64: prop.imagemBase64,
-                                suggestedPaleta: prop.sugestaoPaleta,
-                                suggestedFont: prop.sugestaoFontPairId,
-                                titleLabel: prop.titulo,
-                                fixtureNome: prop.fixtureNome,
-                                estiloDirecao: prop.estilo,
-                              })
-                            }
+                            onClick={() => handleChooseIaProposal(prop)}
                             className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-stone-900 px-5 py-3 text-sm font-semibold text-stone-50 transition hover:bg-stone-800 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-stone-900"
                           >
                             <Check className="h-4 w-4 text-amber-300" />
-                            <span>Escolher</span>
+                            <span>Escolher como Referência</span>
                           </button>
 
                           <button
@@ -2202,7 +2079,7 @@ export function KitStudioWizard() {
                             disabled={adjBlocked || Boolean(busyDetail)}
                             onClick={() => {
                               setAjustarAlvoId(isEditingThis ? null : prop.id);
-                              setAjusteInstrucao("Reforçar contraste do símbolo e equilibrar margens");
+                              setAjusteInstrucao("Reforçar contraste do emblema e equilibrar margens");
                             }}
                             className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-stone-300 bg-[#FAF7F2] px-4 py-3 text-xs font-bold text-stone-900 transition hover:bg-stone-200 disabled:cursor-not-allowed disabled:opacity-45"
                           >
@@ -2216,92 +2093,6 @@ export function KitStudioWizard() {
                 </div>
               )}
             </>
-          )}
-
-          {/* COMPOSITOR VETORIAL ALTERNATIVO (se acionado manualmente) */}
-          {entradaEscolhida === "A" && usarReservaSvg && (
-            <div className="rounded-3xl border border-stone-200 bg-white p-6 space-y-6">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 pb-4">
-                <div>
-                  <span className="text-xs font-bold uppercase tracking-wider text-amber-800">
-                    Compositor vetorial alternativo
-                  </span>
-                  <h2 className="text-xl font-bold text-stone-950">
-                    {refinamentoOpcoes
-                      ? `2 Versões afinadas (Ronda ${refinamentoRound}/3)`
-                      : "2 Direções vetoriais"}
-                  </h2>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setUsarReservaSvg(false)}
-                  className="rounded-xl border border-stone-300 px-3.5 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-100"
-                >
-                  Voltar às propostas de imagem
-                </button>
-              </div>
-
-              <div className="grid gap-6 lg:grid-cols-2">
-                {(refinamentoOpcoes || direcoesReserva || []).map((opt, idx) => (
-                  <div
-                    key={opt.id}
-                    className="flex flex-col justify-between rounded-2xl border border-stone-200 bg-[#FAF7F2] p-5 space-y-4"
-                  >
-                    <div className="space-y-3">
-                      <span className="inline-block rounded-md bg-stone-900 px-2.5 py-1 text-xs font-bold text-amber-300">
-                        {opt.titulo}
-                      </span>
-                      <div
-                        className="flex h-48 items-center justify-center rounded-xl border border-stone-200 p-4"
-                        style={{ backgroundColor: opt.paleta.papel.hex }}
-                      >
-                        <img
-                          src={svgToDataUrl(opt.logoSvg)}
-                          alt={opt.titulo}
-                          className="max-h-full max-w-full object-contain"
-                        />
-                      </div>
-                      <p className="text-xs text-stone-600">{opt.racional}</p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {!refinamentoOpcoes ? (
-                        <button
-                          type="button"
-                          onClick={() => handleRequestRefinementReserve(opt.directionId, 1)}
-                          className="w-full rounded-xl bg-stone-900 px-4 py-2.5 text-xs font-bold text-white"
-                        >
-                          Afinar esta direção (2 versões)
-                        </button>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => handleFinalizeReserveSvg(opt)}
-                            className="flex-1 rounded-xl bg-stone-900 px-4 py-2.5 text-xs font-bold text-white"
-                          >
-                            Aprovar SVG #{idx + 1}
-                          </button>
-                          {refinamentoRound < 3 && idx === 1 && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleRequestRefinementReserve(
-                                  chosenDirectionId,
-                                  refinamentoRound + 1
-                                )
-                              }
-                              className="rounded-xl border border-stone-300 bg-white px-3 py-2.5 text-xs font-bold"
-                            >
-                              Mostrar outras 2
-                            </button>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
           )}
 
           {/* ENTRADA B: Carregamento e Diagnóstico */}
@@ -2356,11 +2147,11 @@ export function KitStudioWizard() {
 
               <div className="lg:col-span-6 rounded-3xl border border-stone-200 bg-white p-6 space-y-4">
                 <h2 className="text-lg font-bold text-stone-950">
-                  Recorte e limpeza automática
+                  Recorte e imagem de referência
                 </h2>
                 {draft ? (
                   <>
-                    <div className="checkerboard-bg flex h-44 items-center justify-center rounded-2xl border border-stone-200 p-4">
+                    <div className="checkerboard-bg flex h-48 items-center justify-center rounded-2xl border border-stone-200 p-4">
                       <img
                         src={`/api/rascunhos/${draft.id}`}
                         alt="Logótipo analisado"
@@ -2369,7 +2160,7 @@ export function KitStudioWizard() {
                     </div>
                     <div className="text-xs text-stone-700 space-y-1">
                       <p className="font-semibold text-emerald-800">
-                        ✓ {draft.width}×{draft.height} px ({draft.originalFormat.toUpperCase()}) • Fundo tratado
+                        ✓ {draft.width}×{draft.height} px ({draft.originalFormat.toUpperCase()}) • Pronto como referência visual
                       </p>
                       {draft.lowQuality && draft.qualityWarning && (
                         <p className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-amber-950">
@@ -2377,36 +2168,19 @@ export function KitStudioWizard() {
                         </p>
                       )}
                     </div>
-                    <div className="flex flex-wrap gap-2.5 pt-2">
-                      <button
-                        type="button"
-                        id="btn-b-vetorizar"
-                        onClick={() =>
-                          executeLocalVectorize({
-                            draftId: draft.id,
-                            suggestedPaleta: draft.paletaExtraida,
-                            fixtureNome: draft.logoDna?.fixtureLogoOrigem,
-                          })
-                        }
-                        className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-stone-900 px-4 py-3 text-xs font-bold text-stone-50 hover:bg-stone-800"
-                      >
-                        <Wand2 className="h-4 w-4 text-amber-300" />
-                        <span>Vetorizar e Confirmar Vetor</span>
-                      </button>
-                      <button
-                        type="button"
-                        id="btn-b-avancar-direto"
-                        onClick={() => setStep("paleta")}
-                        className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-stone-300 bg-[#FAF7F2] px-4 py-3 text-xs font-bold text-stone-900 hover:bg-stone-200"
-                      >
-                        <span>Ir direto para Paleta</span>
-                        <ArrowRight className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      id="btn-b-avancar-direto"
+                      onClick={() => setStep("paleta")}
+                      className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-stone-900 px-5 py-3 text-sm font-semibold text-stone-50 hover:bg-stone-800"
+                    >
+                      <span>Confirmar Referência e Avançar para Paleta</span>
+                      <ArrowRight className="h-4 w-4" />
+                    </button>
                   </>
                 ) : (
                   <div className="flex h-52 items-center justify-center rounded-2xl border border-stone-200 bg-[#FAF7F2] p-6 text-center text-xs text-stone-500">
-                    Carregue o ficheiro ou clique em «Carregar ensaio: Forno da Vilariça» para inspecionar o recorte.
+                    Carregue o ficheiro ou clique em «Carregar ensaio: Forno da Vilariça» para preparar a referência.
                   </div>
                 )}
               </div>
@@ -2416,236 +2190,31 @@ export function KitStudioWizard() {
       )}
 
       {/* =====================================================================
-          PASSO 4: CONFIRMAR VETOR (ORIGINAL vs VETOR SVG + PRÉ-VISUALIZAÇÃO 32 px)
-      ===================================================================== */}
-      {step === "vetor" && vetorState && (
-        <section className="rounded-3xl border border-stone-200 bg-white p-6 sm:p-10 shadow-xs space-y-8">
-          <div className="flex flex-wrap items-start justify-between gap-4 border-b border-stone-200 pb-6">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-widest text-amber-800">
-                Passo 4 de 8 • Confirmação Vetorial
-              </p>
-              <h1 className="mt-1 text-2xl font-bold text-stone-950 sm:text-3xl">
-                Confirmar vetor
-              </h1>
-              <p className="mt-1 text-sm text-stone-600">
-                Verifique o resultado vetorial frente ao original e confira a nitidez do símbolo reduzido a <strong>32 px</strong> (tamanho de separador/favicon) antes de gerar as 5 variantes.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setStep("logotipo")}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-stone-300 bg-white px-4 py-2.5 text-xs font-semibold text-stone-700 hover:bg-stone-100"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              <span>Voltar às propostas</span>
-            </button>
-          </div>
-
-          {/* Métricas de qualidade e limpeza do SVG */}
-          <div className="flex flex-wrap items-center gap-2.5 text-xs">
-            <span
-              className={`rounded-full px-3 py-1 font-bold ${
-                vetorState.under200Kb
-                  ? "bg-emerald-100 text-emerald-950"
-                  : "bg-red-100 text-red-900"
-              }`}
-            >
-              Tamanho SVG: {(vetorState.byteSize / 1024).toFixed(1)} KB / 200 KB
-            </span>
-            <span
-              className={`rounded-full px-3 py-1 font-bold ${
-                vetorState.within8Colors
-                  ? "bg-emerald-100 text-emerald-950"
-                  : "bg-amber-100 text-amber-950"
-              }`}
-            >
-              Paleta reduzida: {vetorState.colorsCount} / 8 cores
-            </span>
-            <span className="rounded-full border border-stone-200 bg-[#FAF7F2] px-3 py-1 font-semibold text-stone-800">
-              Formato: SVG vetorial limpo
-            </span>
-            {vetorState.backgroundRemoved && (
-              <span className="rounded-full bg-emerald-100 px-3 py-1 font-semibold text-emerald-950">
-                ✓ Margem lisa removida
-              </span>
-            )}
-          </div>
-
-          {/* Comparação Original vs Vetor + Pré-visualização 32 px */}
-          <div className="grid gap-6 lg:grid-cols-12">
-            <div className="lg:col-span-5 rounded-2xl border border-stone-200 bg-[#FAF7F2] p-5 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider text-stone-700">
-                  Original
-                </span>
-                <span className="text-[11px] text-stone-500">Imagem de partida</span>
-              </div>
-              <div className="flex h-56 items-center justify-center rounded-xl border border-stone-200 bg-[#FAF6F0] p-4 overflow-hidden">
-                {chosenLogoOriginalDataUrl ? (
-                  <img
-                    src={chosenLogoOriginalDataUrl}
-                    alt="Original selecionado"
-                    className="max-h-full max-w-full object-contain"
-                  />
-                ) : (
-                  <span className="text-xs text-stone-500">Original</span>
-                )}
-              </div>
-            </div>
-
-            <div className="lg:col-span-5 rounded-2xl border-2 border-stone-900 bg-[#FAF7F2] p-5 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-stone-950">
-                  Vetor SVG limpo
-                </span>
-                <div className="flex flex-wrap gap-1">
-                  {(
-                    [
-                      { key: "color", label: "Cor" },
-                      { key: "simbolo", label: "Símbolo" },
-                      { key: "mono", label: "Mono" },
-                      { key: "negativo", label: "Negativo" },
-                    ] as const
-                  ).map((t) => (
-                    <button
-                      key={t.key}
-                      type="button"
-                      onClick={() => setActiveVectorTab(t.key)}
-                      className={`rounded-lg px-2 py-1 text-[11px] font-bold transition ${
-                        activeVectorTab === t.key
-                          ? "bg-stone-900 text-amber-300"
-                          : "bg-white text-stone-700 hover:bg-stone-200"
-                      }`}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div
-                className={`flex h-56 items-center justify-center rounded-xl border border-stone-200 p-4 overflow-hidden ${
-                  activeVectorTab === "negativo"
-                    ? "bg-stone-900"
-                    : "checkerboard-bg"
-                }`}
-              >
-                <img
-                  src={svgToDataUrl(
-                    activeVectorTab === "simbolo"
-                      ? vetorState.simboloSvg
-                      : activeVectorTab === "mono"
-                      ? vetorState.monocromaticoSvg
-                      : activeVectorTab === "negativo"
-                      ? vetorState.negativoSvg
-                      : vetorState.colorSvg
-                  )}
-                  alt={`Vetor ${activeVectorTab}`}
-                  className="max-h-full max-w-full object-contain"
-                />
-              </div>
-
-              {/* Cores da paleta extraída do vetor */}
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <span className="text-[11px] font-semibold text-stone-600">Cores no SVG:</span>
-                {vetorState.colorsHex.map((hex) => (
-                  <span
-                    key={hex}
-                    className="inline-flex items-center gap-1 rounded-md border border-stone-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-stone-800"
-                  >
-                    <span
-                      className="h-3 w-3 rounded-xs border border-stone-300"
-                      style={{ backgroundColor: hex }}
-                    />
-                    {hex}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            {/* Pré-visualização a 32 px dedicada */}
-            <div className="lg:col-span-2 rounded-2xl border border-stone-200 bg-[#FAF7F2] p-5 flex flex-col justify-between space-y-4">
-              <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-stone-800">
-                  Escala 32 px
-                </span>
-                <p className="mt-1 text-[11px] text-stone-600">
-                  Leitura real de favicon e perfil miniatura.
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white p-4">
-                  <img
-                    src={vetorState.preview32DataUrl}
-                    alt="Pré-visualização a 32 px sobre fundo claro"
-                    width={32}
-                    height={32}
-                    className="h-8 w-8 object-contain"
-                  />
-                  <span className="font-mono text-[10px] text-stone-500">32×32 claro</span>
-                </div>
-                <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-stone-800 bg-stone-900 p-4">
-                  <img
-                    src={svgToDataUrl(vetorState.simboloNegativoSvg || vetorState.simboloSvg)}
-                    alt="Pré-visualização a 32 px sobre fundo escuro"
-                    width={32}
-                    height={32}
-                    className="h-8 w-8 object-contain"
-                  />
-                  <span className="font-mono text-[10px] text-stone-300">32×32 escuro</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-4 border-t border-stone-200 pt-6">
-            <p className="text-xs text-stone-600">
-              Ao confirmar, as <strong>5 variantes</strong> (Principal, Ícone, Horizontal, Fundo claro e Fundo escuro) serão geradas diretamente a partir deste vetor.
-            </p>
-            <button
-              type="button"
-              id="btn-confirmar-vetor"
-              disabled={Boolean(busyDetail)}
-              onClick={executeConfirmVectorAndVariants}
-              className="inline-flex items-center gap-2 rounded-xl bg-stone-900 px-6 py-3.5 text-sm font-semibold text-stone-50 shadow-xs transition hover:bg-stone-800 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-stone-900"
-            >
-              <CheckCircle2 className="h-4 w-4 text-amber-300" />
-              <span>Confirmar vetor e avançar para Paleta</span>
-              <ArrowRight className="h-4 w-4" />
-            </button>
-          </div>
-        </section>
-      )}
-
-      {/* =====================================================================
-          PASSO 5: PALETA E TIPOGRAFIA (2 PROPOSTAS + VER MAIS)
+          PASSO 4: PALETA E TIPOGRAFIA
       ===================================================================== */}
       {step === "paleta" && (
         <section className="space-y-8">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="text-xs font-bold uppercase tracking-widest text-amber-800">
-                Passo 5 de 8 • Paleta e Tipografia • Regra das 2 Escolhas
+                Passo 4 de 7 • Paleta e Tipografia
               </p>
               <h1 className="mt-1 text-2xl font-bold text-stone-950 sm:text-3xl">
-                Duas propostas distintas de paleta e par de tipos
+                Paleta cromática e par de tipos do logótipo escolhido
               </h1>
               <p className="mt-1 text-sm text-stone-600">
-                Nunca apenas as mesmas cores trocadas de ordem: cada proposta tem personalidade tipográfica e hierarquia cromática própria.
+                Estas cores alimentam o Guia de Marca A4, o estacionário de impressão e a harmonização das peças visuais geradas por imagem.
               </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
-                onClick={() => setStep(vetorState ? "vetor" : "logotipo")}
+                onClick={() => setStep("logotipo")}
                 className="inline-flex items-center gap-1.5 rounded-xl border border-stone-300 bg-white px-4 py-2.5 text-xs font-semibold text-stone-700 hover:bg-stone-100"
               >
                 <ArrowLeft className="h-4 w-4" />
-                <span>Voltar</span>
+                <span>Voltar ao Logótipo</span>
               </button>
 
               {!showAllProposals && propostas.length > 2 && (
@@ -2662,7 +2231,6 @@ export function KitStudioWizard() {
             </div>
           </div>
 
-          {/* Grelha de propostas com botões nativos acessíveis */}
           <div className="grid gap-6 md:grid-cols-2">
             {(showAllProposals ? propostas : propostas.slice(0, 2)).map((prop) => {
               const isSelected = selectedProposalId === prop.id;
@@ -2754,22 +2322,17 @@ export function KitStudioWizard() {
                         </div>
                       ))}
                     </div>
-
-                    <p className="text-xs text-stone-600 leading-relaxed">
-                      {prop.descricao}
-                    </p>
                   </div>
                 </button>
               );
             })}
           </div>
 
-          {/* Afinação manual das 4 cores + Par Tipográfico */}
           <div className="rounded-3xl border border-stone-200 bg-white p-6 sm:p-8 space-y-6">
             <div>
               <h2 className="text-lg font-bold text-stone-950 flex items-center gap-2">
                 <Palette className="h-5 w-5 text-amber-800" />
-                <span>Afinação manual de cores e tipos (opcional)</span>
+                <span>Afinação manual de cores e tipos</span>
               </h2>
               <p className="text-xs text-stone-600 mt-1">
                 O neutro (<strong>{customPalette.neutro.hex}</strong>) é calculado automaticamente entre Papel e Tinta.
@@ -2853,14 +2416,126 @@ export function KitStudioWizard() {
               </div>
             </div>
 
+            {/* Opção recolhível para estacionário de impressão/email */}
+            <div className="rounded-2xl border border-stone-200 bg-[#FAF7F2] p-4 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-bold text-stone-900">
+                    Estacionário opcional (Cartão de visita, Papel de carta A4 e Assinatura)
+                  </p>
+                  <p className="text-[11px] text-stone-600">
+                    Não afeta as peças sociais (sempre geradas por imagem a partir do logótipo).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowStationeryPanel((v) => !v)}
+                  className="rounded-xl border border-stone-300 bg-white px-3 py-1.5 text-xs font-bold text-stone-900 hover:bg-stone-100"
+                >
+                  {showStationeryPanel ? "Ocultar estacionário" : "Configurar estacionário"}
+                </button>
+              </div>
+
+              {showStationeryPanel && (
+                <div className="divide-y divide-stone-200 border-t border-stone-200 pt-3">
+                  {STATIONERY_GROUPS.map((grp) => {
+                    const recPair = SECTORS[dados.sector].recomendacoes[grp.key];
+                    const currentStyle = styleOverrides[grp.key];
+                    const isCatalogOpen = Boolean(openGroupCatalog[grp.key]);
+                    const visibleStyles: StyleId[] = isCatalogOpen
+                      ? (Object.keys(CONTENT_STYLES) as StyleId[])
+                      : Array.from(new Set([...recPair, currentStyle]));
+
+                    return (
+                      <div
+                        key={grp.key}
+                        className="py-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between"
+                      >
+                        <div className="text-xs">
+                          <p className="font-bold text-stone-900">{grp.rotulo}</p>
+                          <p className="text-stone-600">{grp.descricao}</p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {visibleStyles.map((stId) => {
+                            const st = CONTENT_STYLES[stId];
+                            const isSelected = currentStyle === stId;
+                            return (
+                              <button
+                                key={stId}
+                                type="button"
+                                onClick={() =>
+                                  setStyleOverrides((prev) => ({
+                                    ...prev,
+                                    [grp.key]: stId,
+                                  }))
+                                }
+                                className={`rounded-xl border px-3 py-1 text-xs font-semibold transition ${
+                                  isSelected
+                                    ? "border-stone-900 bg-stone-900 text-stone-50"
+                                    : "border-stone-300 bg-white text-stone-800"
+                                }`}
+                              >
+                                {st.nome}
+                              </button>
+                            );
+                          })}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setOpenGroupCatalog((prev) => ({
+                                ...prev,
+                                [grp.key]: !prev[grp.key],
+                              }))
+                            }
+                            className="rounded-xl border border-stone-300 bg-white px-2.5 py-1 text-xs font-bold text-amber-900"
+                          >
+                            {isCatalogOpen ? "Fechar" : "Ver todos"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {needsPhotoForStationery && (
+                    <div className="pt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <span className="font-bold text-amber-950">
+                        Selecionou «Fotografia» no estacionário:{" "}
+                        {photoFilename ? `(${photoFilename})` : "carregue uma fotografia."}
+                      </span>
+                      <label className="cursor-pointer rounded-xl bg-stone-900 px-3 py-1.5 font-semibold text-white">
+                        <span>Carregar foto</span>
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              if (typeof reader.result === "string") {
+                                setPhotoDataUrl(reader.result);
+                                setPhotoFilename(f.name);
+                              }
+                            };
+                            reader.readAsDataURL(f);
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="flex justify-end border-t border-stone-200 pt-6">
               <button
                 type="button"
-                id="btn-avancar-capas"
-                onClick={() => setStep("capas")}
+                id="btn-avancar-propostas"
+                onClick={() => setStep("propostas")}
                 className="inline-flex items-center gap-2 rounded-xl bg-stone-900 px-6 py-3.5 text-sm font-semibold text-stone-50 shadow-xs transition hover:bg-stone-800 focus-visible:outline-2 focus-visible:outline-stone-900"
               >
-                <span>Aprovar Paleta e Escolher Capa em Camadas</span>
+                <span>Ver Propostas Visuais da Marca (Moderna + Clássica)</span>
                 <ArrowRight className="h-4 w-4" />
               </button>
             </div>
@@ -2869,24 +2544,25 @@ export function KitStudioWizard() {
       )}
 
       {/* =====================================================================
-          PASSO 6: CAPAS EM CAMADAS (SEMPRE 1 MODERNA + 1 CLÁSSICA + CATÁLOGO 6)
+          PASSO 5: PROPOSTAS VISUAIS SÓ-IMAGEM (MODERNA + CLÁSSICA + ZONAS SEGURAS)
       ===================================================================== */}
-      {step === "capas" && (
-        <section className="space-y-8">
+      {step === "propostas" && (
+        <section className="space-y-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
+            <div className="space-y-1 max-w-3xl">
               <p className="text-xs font-bold uppercase tracking-widest text-amber-800">
-                Passo 6 de 8 • Capas Nascidas do Logótipo • 1 Moderna + 1 Clássica
+                Passo 5 de 7 • Geração por Imagem com Referência Obrigatória
               </p>
-              <h1 className="mt-1 text-2xl font-bold text-stone-950 sm:text-3xl">
-                Escolha o layout da sua capa (nascido do logótipo e com os seus dados reais)
+              <h1 className="text-2xl font-bold text-stone-950 sm:text-3xl">
+                Compare 1 proposta Moderna em camadas e 1 Clássica
               </h1>
-              <p className="mt-1 text-sm text-stone-600">
-                As capas e publicações nascem do logótipo escolhido (referência, paleta, formas e estilo), compondo por cima apenas o logótipo vetorizado e os seus dados reais com contraste WCAG AA.
+              <p className="text-sm text-stone-600">
+                Todas as peças nascem diretamente da imagem do logótipo escolhido como referência, no tom{" "}
+                <strong>{TOM_DA_MARCA_SPECS[tom].nome}</strong>, cortadas às medidas exatas ({REFERENCE_DATE_REDES_PT}) e validadas nas zonas seguras para computador e telemóvel.
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => setStep("paleta")}
@@ -2896,294 +2572,344 @@ export function KitStudioWizard() {
                 <span>Voltar à Paleta</span>
               </button>
 
-              {!showAllCapas && (
-                <button
-                  type="button"
-                  id="btn-outras-2-capas"
-                  disabled={capasLoading}
-                  onClick={() => setCapaRound((r) => (r >= 3 ? 1 : r + 1))}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-stone-300 bg-[#FAF7F2] px-4 py-2.5 text-xs font-bold text-stone-900 hover:bg-stone-200"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  <span>Ver outras 2 ({capaRound}/3)</span>
-                </button>
-              )}
-
               <button
                 type="button"
-                id="btn-toggle-capas-catalogo"
-                disabled={capasLoading}
-                onClick={() => setShowAllCapas((v) => !v)}
-                className="inline-flex items-center gap-2 rounded-xl border-2 border-stone-900 bg-white px-4 py-2.5 text-xs font-bold text-stone-950 hover:bg-stone-900 hover:text-stone-50"
+                id="btn-regenerar-par-propostas"
+                disabled={propostasLoading}
+                onClick={() =>
+                  fetchPropostasVisuais({ redeId: activePropostaRedeId, regenerar: true })
+                }
+                className="inline-flex items-center gap-1.5 rounded-xl border border-stone-300 bg-[#FAF7F2] px-4 py-2.5 text-xs font-bold text-stone-900 hover:bg-stone-200 disabled:opacity-50"
               >
-                <Layers className="h-3.5 w-3.5" />
-                <span>
-                  {showAllCapas ? "Mostrar par (1 Moderna + 1 Clássica)" : "Ver catálogo (6 layouts)"}
-                </span>
+                <RefreshCw className={`h-3.5 w-3.5 ${propostasLoading ? "animate-spin" : ""}`} />
+                <span>Regenerar ambas</span>
               </button>
             </div>
           </div>
 
-          {capasLoading && (
-            <div role="status" className="flex items-center gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-xs font-bold text-amber-950">
+          {/* Cartão do logótipo referência obrigatória + barra de formato e viewport */}
+          <div className="rounded-2xl border border-stone-200 bg-white p-4 sm:p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-stone-100 pb-4">
+              <div className="flex items-center gap-3">
+                {(chosenLogoOriginalDataUrl || draft?.id) && (
+                  <div className="h-12 w-12 shrink-0 rounded-xl border border-stone-200 bg-[#FAF7F2] p-1 flex items-center justify-center overflow-hidden">
+                    <img
+                      src={
+                        chosenLogoOriginalDataUrl || `/api/rascunhos/${draft?.id}`
+                      }
+                      alt="Logótipo referência ativa"
+                      className="max-h-full max-w-full object-contain"
+                    />
+                  </div>
+                )}
+                <div className="text-xs">
+                  <p className="font-bold text-stone-950">
+                    Imagem de referência obrigatória ativa • {dados.nome}
+                  </p>
+                  <p className="text-stone-600">
+                    Motor: <strong>{imagemConfig.modelo}</strong> • Proporção nativa atual:{" "}
+                    <strong>{activePropostaRede.aspectRatioGemini}</strong> →{" "}
+                    <strong>{activePropostaRede.medidaLabel}</strong>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <div className="inline-flex rounded-xl border border-stone-300 bg-[#FAF7F2] p-0.5">
+                  <button
+                    type="button"
+                    id="btn-proposta-desktop"
+                    aria-pressed={propostaViewport === "desktop"}
+                    onClick={() => setPropostaViewport("desktop")}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-bold transition ${
+                      propostaViewport === "desktop"
+                        ? "bg-stone-900 text-amber-300"
+                        : "text-stone-700 hover:text-stone-950"
+                    }`}
+                  >
+                    <Monitor className="h-3.5 w-3.5" />
+                    <span>Computador</span>
+                  </button>
+                  <button
+                    type="button"
+                    id="btn-proposta-mobile"
+                    aria-pressed={propostaViewport === "mobile"}
+                    onClick={() => setPropostaViewport("mobile")}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-bold transition ${
+                      propostaViewport === "mobile"
+                        ? "bg-stone-900 text-amber-300"
+                        : "text-stone-700 hover:text-stone-950"
+                    }`}
+                  >
+                    <Smartphone className="h-3.5 w-3.5" />
+                    <span>Telemóvel</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  id="btn-proposta-toggle-zonas"
+                  aria-pressed={showSafeZonesOnPropostas}
+                  onClick={() => setShowSafeZonesOnPropostas((v) => !v)}
+                  className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 font-bold transition ${
+                    showSafeZonesOnPropostas
+                      ? "border-emerald-700 bg-emerald-50 text-emerald-950"
+                      : "border-stone-300 bg-white text-stone-700"
+                  }`}
+                >
+                  <Layers className="h-3.5 w-3.5" />
+                  <span>Mostrar zonas seguras</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Seletor rápido dos principais formatos + todas as 18 peças */}
+            <div className="flex flex-wrap items-center gap-2">
+              {PROPOSTA_FEATURED_REDES.map((item) => {
+                const active = activePropostaRedeId === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    id={`btn-rede-tab-${item.id}`}
+                    aria-pressed={active}
+                    onClick={() => setActivePropostaRedeId(item.id)}
+                    className={`rounded-xl px-3 py-1.5 text-xs font-bold transition ${
+                      active
+                        ? "bg-stone-900 text-amber-300"
+                        : "border border-stone-200 bg-[#FAF7F2] text-stone-800 hover:border-stone-400"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+
+              <select
+                id="select-rede-proposta"
+                aria-label="Escolher outra peça social das 18 medidas"
+                value={activePropostaRedeId}
+                onChange={(e) => setActivePropostaRedeId(e.target.value as RedeSocialId)}
+                className="rounded-xl border border-stone-300 bg-white px-3 py-1.5 text-xs font-semibold text-stone-800"
+              >
+                {REDES_SOCIAIS_LIST.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.nome} ({r.medidaLabel})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Aviso obrigatório sobre textos gerados pela IA */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-5 py-3.5 text-xs text-amber-950">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="h-4 w-4 text-amber-800 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold">Verifique os textos</p>
+                <p className="mt-0.5 text-amber-900">{propostasAvisoTextos}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {(propostasPecas[0]?.textosPedidos?.length || 0) > 0 ? (
+                propostasPecas[0].textosPedidos.map((txt, i) => (
+                  <span
+                    key={i}
+                    className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 font-semibold text-stone-900"
+                  >
+                    «{txt}»
+                  </span>
+                ))
+              ) : (
+                <span className="rounded-lg border border-amber-200 bg-white px-2.5 py-1 font-semibold text-stone-700">
+                  Apenas emblema (sem texto extra)
+                </span>
+              )}
+            </div>
+          </div>
+
+          {propostasLoading && (
+            <div
+              role="status"
+              className="flex items-center gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-xs font-bold text-amber-950"
+            >
               <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-              <span>A criar as tuas propostas… a compor as camadas de capa com o seu logótipo…</span>
+              <span>
+                A gerar as propostas Moderna em camadas e Clássica com o logótipo como referência…
+              </span>
             </div>
           )}
 
-          {/* Grelha de capas pré-visualizadas */}
-          <div className="grid gap-6 md:grid-cols-2">
-            {capasPreviews.map(({ spec, previewDataUrl, audit }) => {
-              const isSelected = selectedCoverLayoutId === spec.id;
+          {/* Grelha Lado a Lado: Moderna vs Clássica */}
+          <div className="grid gap-6 lg:grid-cols-2">
+            {propostasPecas.map((prop) => {
+              const isSelected = estiloVisual === prop.estiloVisual;
+              const isRegenThis = regeneratingEstilo === prop.estiloVisual;
 
               return (
-                <button
-                  key={spec.id}
-                  type="button"
-                  id={`card-capa-${spec.id}`}
-                  aria-pressed={isSelected}
-                  onClick={() => {
-                    setSelectedCoverLayoutId(spec.id);
-                    setKitStyle(spec.estiloSugerido);
-                    setStyleOverrides((prev) => ({
-                      ...prev,
-                      capas: spec.estiloSugerido,
-                    }));
-                  }}
-                  className={`flex flex-col justify-between rounded-3xl border-2 p-5 text-left transition space-y-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900 ${
+                <article
+                  key={prop.id}
+                  id={`card-proposta-visual-${prop.estiloVisual}`}
+                  className={`flex flex-col justify-between rounded-3xl border-2 p-5 sm:p-6 transition space-y-4 ${
                     isSelected
                       ? "border-stone-950 bg-white ring-2 ring-stone-900/15 shadow-sm"
                       : "border-stone-200 bg-white/95 hover:border-stone-400"
                   }`}
                 >
-                  <div className="w-full space-y-3">
+                  <div className="space-y-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <span
                           className={`rounded-lg px-2.5 py-1 text-xs font-bold ${
-                            spec.categoria === "moderno"
+                            prop.estiloVisual === "moderno"
                               ? "bg-stone-900 text-amber-300"
                               : "bg-amber-100 text-amber-950"
                           }`}
                         >
-                          {spec.categoria === "moderno" ? "Moderno" : "Clássico"}
+                          {prop.estiloVisual === "moderno"
+                            ? "Moderna em camadas"
+                            : "Clássica"}
                         </span>
                         <h2 className="text-base font-bold text-stone-950">
-                          {spec.nome}
+                          {activePropostaRede.nome}
                         </h2>
                       </div>
                       {isSelected && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-emerald-950">
                           <Check className="h-3 w-3" />
-                          Selecionada
+                          Direção escolhida
                         </span>
                       )}
                     </div>
 
-                    <div className="overflow-hidden rounded-xl border border-stone-200 bg-stone-100">
-                      <img
-                        src={previewDataUrl}
-                        alt={`Pré-visualização capa ${spec.nome}`}
-                        className="w-full h-auto object-cover"
+                    <div className="rounded-2xl border border-stone-200 bg-[#FAF7F2] p-3">
+                      <SafeZoneSocialFrame
+                        rede={activePropostaRede}
+                        imageUrl={prop.previewDataUrl}
+                        alt={`${prop.tituloProposta} — ${activePropostaRede.nome}`}
+                        viewport={propostaViewport}
+                        showSafeZones={showSafeZonesOnPropostas}
+                        maxHeightPx={240}
                       />
                     </div>
 
-                    <p className="text-xs text-stone-600 leading-relaxed">
-                      {spec.descricao}
-                    </p>
+                    {(activePropostaRede.isCircle || activePropostaRede.test40px) && (
+                      <Circle40pxTestPreview
+                        imageUrl={prop.previewDataUrl}
+                        nome={dados.nome || "Marca"}
+                        contraste={prop.audit.contraste40px}
+                        legivel={prop.audit.circulo40pxLegivel}
+                      />
+                    )}
 
                     <div className="flex flex-wrap gap-1.5 text-[11px]">
-                      <span
-                        title={audit.promptResumo}
-                        className="rounded-md bg-amber-100 px-2 py-0.5 font-semibold text-amber-950"
-                      >
-                        {audit.referenciaLogoUsada
-                          ? `Nascida do logótipo (${audit.estiloDoLogotipo}) ✓`
-                          : `ADN do logótipo (${audit.estiloDoLogotipo}) ✓`}
+                      <span className="rounded-md bg-amber-100 px-2 py-0.5 font-semibold text-amber-950">
+                        {prop.referenciaLogoUsada
+                          ? "Referência do logótipo ✓"
+                          : "Sem referência"}
+                      </span>
+                      <span className="rounded-md bg-stone-100 px-2 py-0.5 font-semibold text-stone-800">
+                        Gemini {prop.aspectRatioGemini} → {prop.width}×{prop.height} px
                       </span>
                       <span
                         className={`rounded-md px-2 py-0.5 font-semibold ${
-                          audit.wcagAaPassed
-                            ? "bg-emerald-100 text-emerald-950"
-                            : "bg-amber-100 text-amber-950"
+                          prop.audit.precisaRegeneracao
+                            ? "bg-red-100 text-red-900"
+                            : "bg-emerald-100 text-emerald-950"
                         }`}
                       >
-                        WCAG AA {audit.contrastRatio}:1
-                      </span>
-                      <span className="rounded-md bg-stone-100 px-2 py-0.5 font-semibold text-stone-800">
-                        Logo {Math.round(audit.logoHeightRatio * 100)}% altura
-                      </span>
-                      <span className="rounded-md bg-stone-100 px-2 py-0.5 font-semibold text-stone-800">
-                        {audit.safeZoneRespectsAvatar ? "Zona segura avatar ✓" : "Zona ajustada"}
+                        {prop.audit.precisaRegeneracao
+                          ? "Fora da zona segura — Regenerar"
+                          : "Zonas seguras validadas ✓"}
                       </span>
                     </div>
+
+                    {prop.audit.motivos.length > 0 && (
+                      <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-medium text-red-900">
+                        {prop.audit.motivos.join(" ")}
+                      </p>
+                    )}
+
+                    <div className="rounded-xl border border-stone-200 bg-[#FAF7F2] px-3 py-2 text-[11px] text-stone-700">
+                      <span className="font-bold text-stone-900">
+                        Verifique os textos:{" "}
+                      </span>
+                      {prop.textosPedidos.length > 0
+                        ? prop.textosPedidos.map((t) => `«${t}»`).join(" • ")
+                        : "Avatar apenas com o emblema (legibilidade 40 px)."}
+                    </div>
                   </div>
-                </button>
+
+                  <div className="flex flex-wrap items-center gap-2.5 pt-2">
+                    <button
+                      type="button"
+                      id={`btn-selecionar-estilo-${prop.estiloVisual}`}
+                      onClick={() => setEstiloVisual(prop.estiloVisual)}
+                      className={`flex-1 inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition ${
+                        isSelected
+                          ? "bg-stone-900 text-amber-300"
+                          : "border border-stone-900 bg-white text-stone-950 hover:bg-stone-900 hover:text-stone-50"
+                      }`}
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                      <span>
+                        {isSelected ? "Selecionada para o Kit" : "Escolher esta direção"}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      id={`btn-regenerar-proposta-${prop.estiloVisual}`}
+                      disabled={isRegenThis || propostasLoading}
+                      onClick={() => handleRegenerateSingleProposta(prop.estiloVisual)}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-stone-300 bg-[#FAF7F2] px-4 py-2.5 text-xs font-bold text-stone-900 hover:bg-stone-200 disabled:opacity-50"
+                    >
+                      <RefreshCw
+                        className={`h-3.5 w-3.5 ${isRegenThis ? "animate-spin" : ""}`}
+                      />
+                      <span>Regenerar</span>
+                    </button>
+                  </div>
+                </article>
               );
             })}
           </div>
 
-          {/* Painel colapsável para estilos por grupo e fotografia opcional */}
-          <div className="rounded-3xl border border-stone-200 bg-white p-6 space-y-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-base font-bold text-stone-950">
-                  Estilo das restantes peças e fotografia de fundo (opcional)
-                </h2>
-                <p className="text-xs text-stone-600">
-                  Por omissão os outros formatos seguem as recomendações para{" "}
-                  <strong>{SECTORS[dados.sector]?.rotulo}</strong>. Pode ajustar grupo a grupo se desejar.
-                </p>
-              </div>
-              <button
-                type="button"
-                id="btn-toggle-estilos-avancados"
-                onClick={() => setShowGroupOverridesPanel((v) => !v)}
-                className="rounded-xl border border-stone-300 bg-[#FAF7F2] px-3.5 py-2 text-xs font-bold text-stone-900 hover:bg-stone-200"
-              >
-                {showGroupOverridesPanel ? "Ocultar ajustes por grupo" : "Ajustar estilos por grupo"}
-              </button>
-            </div>
-
-            {/* Upload de foto opcional para capas/peças fotográficas */}
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-stone-200 bg-[#FAF7F2] p-4">
-              <div className="text-xs space-y-0.5">
-                <p className="font-bold text-stone-900">
-                  Fotografia personalizada para o recorte / fundos fotográficos
-                </p>
-                <p className="text-stone-600">
-                  {photoFilename
-                    ? `Fotografia carregada: ${photoFilename}`
-                    : "Sem foto carregada, utiliza a fotografia de demonstração da padaria."}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="cursor-pointer inline-flex items-center gap-1.5 rounded-xl bg-stone-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-stone-800">
-                  <Upload className="h-3.5 w-3.5" />
-                  <span>Carregar foto</span>
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp,image/svg+xml"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (!f) return;
-                      const reader = new FileReader();
-                      reader.onload = () => {
-                        if (typeof reader.result === "string") {
-                          setPhotoDataUrl(reader.result);
-                          setPhotoFilename(f.name);
-                        }
-                      };
-                      reader.readAsDataURL(f);
-                    }}
-                    className="hidden"
-                  />
-                </label>
-                {photoDataUrl && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPhotoDataUrl("");
-                      setPhotoFilename("");
-                    }}
-                    className="rounded-xl border border-stone-300 bg-white px-3 py-2 text-xs font-semibold text-red-700"
-                  >
-                    Remover foto
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {needsPhotoForNonCover && !photoDataUrl && (
-              <p className="text-xs font-bold text-red-700">
-                Selecionou «Fotografia» para publicação/story/estacionário — carregue uma foto ou escolha outro estilo abaixo.
+          {/* Barra final do Passo 5 -> Gerar os 38 ficheiros */}
+          <div className="rounded-3xl border border-stone-200 bg-white p-6 flex flex-wrap items-center justify-between gap-4">
+            <div className="text-xs text-stone-700 space-y-1">
+              <p>
+                Direção escolhida para todo o kit:{" "}
+                <strong className="text-stone-950">
+                  {estiloVisual === "moderno" ? "Moderna em camadas" : "Clássica"}
+                </strong>{" "}
+                • Tom: <strong className="text-stone-950">{TOM_DA_MARCA_SPECS[tom].nome}</strong>
               </p>
-            )}
-
-            {showGroupOverridesPanel && (
-              <div className="divide-y divide-stone-200 pt-2">
-                {STYLE_GROUPS.map((grp) => {
-                  const recPair = SECTORS[dados.sector].recomendacoes[grp.key];
-                  const currentStyle = styleOverrides[grp.key];
-                  const isCatalogOpen = Boolean(openGroupCatalog[grp.key]);
-                  const visibleStyles: StyleId[] = isCatalogOpen
-                    ? (Object.keys(CONTENT_STYLES) as StyleId[])
-                    : Array.from(new Set([...recPair, currentStyle]));
-
-                  return (
-                    <div
-                      key={grp.key}
-                      className="py-4 first:pt-0 last:pb-0 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"
-                    >
-                      <div className="text-xs">
-                        <p className="font-bold text-stone-900">{grp.rotulo}</p>
-                        <p className="text-stone-600">{grp.descricao}</p>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {visibleStyles.map((stId) => {
-                          const st = CONTENT_STYLES[stId];
-                          const isSelected = currentStyle === stId;
-                          return (
-                            <button
-                              key={stId}
-                              type="button"
-                              onClick={() =>
-                                setStyleOverrides((prev) => ({
-                                  ...prev,
-                                  [grp.key]: stId,
-                                }))
-                              }
-                              className={`rounded-xl border px-3 py-1.5 text-xs font-semibold transition ${
-                                isSelected
-                                  ? "border-stone-900 bg-stone-900 text-stone-50"
-                                  : "border-stone-300 bg-[#FAF7F2] text-stone-800 hover:border-stone-500"
-                              }`}
-                            >
-                              {st.nome}
-                            </button>
-                          );
-                        })}
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setOpenGroupCatalog((prev) => ({
-                              ...prev,
-                              [grp.key]: !prev[grp.key],
-                            }))
-                          }
-                          className="rounded-xl border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-bold text-amber-900 hover:bg-stone-100"
-                        >
-                          {isCatalogOpen ? "Fechar" : "Ver catálogo"}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            <div className="flex flex-wrap items-center justify-between gap-4 border-t border-stone-200 pt-5">
-              <span className="text-xs text-stone-600">
-                Capa ativa: <strong>{selectedCoverLayoutId}</strong>
-              </span>
-              <button
-                type="button"
-                id="btn-gerar-kit-final"
-                disabled={Boolean(busyDetail)}
-                onClick={handleGenerateFullKit}
-                className="inline-flex items-center gap-2 rounded-xl bg-stone-900 px-6 py-3.5 text-sm font-bold text-stone-50 shadow-sm transition hover:bg-stone-800 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-stone-900"
-              >
-                <Sparkles className="h-4 w-4 text-amber-300" />
-                <span>Gerar os 36 Ficheiros e Pré-visualizar</span>
-                <ArrowRight className="h-4 w-4" />
-              </button>
+              <p className="text-stone-500">
+                Vetorização opcional:{" "}
+                {usarVetorizacaoOpcional
+                  ? "Ativa (apenas favicon e PDFs de impressão)"
+                  : "Desativada (fluxo só imagem)"}
+              </p>
             </div>
+
+            <button
+              type="button"
+              id="btn-gerar-kit-final"
+              disabled={Boolean(busyDetail)}
+              onClick={handleGenerateFullKit}
+              className="inline-flex items-center gap-2 rounded-xl bg-stone-900 px-6 py-3.5 text-sm font-bold text-stone-50 shadow-sm transition hover:bg-stone-800 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-stone-900"
+            >
+              <Sparkles className="h-4 w-4 text-amber-300" />
+              <span>Gerar os 38 Ficheiros e Pré-visualizar</span>
+              <ArrowRight className="h-4 w-4" />
+            </button>
           </div>
         </section>
       )}
 
       {/* =====================================================================
-          PASSO 7: PRÉ-VISUALIZAÇÃO COMPLETA DAS 36 PEÇAS
+          PASSO 6: PRÉ-VISUALIZAÇÃO COMPLETA (38 PEÇAS + ZONAS + 40px + REGENERAR)
       ===================================================================== */}
       {step === "previsualizacao" && generatedKit && (
         <section className="space-y-6">
@@ -3192,25 +2918,34 @@ export function KitStudioWizard() {
               <div className="space-y-1.5">
                 <div className="inline-flex items-center gap-2 rounded-full bg-amber-400/20 px-3 py-1 text-xs font-bold text-amber-300">
                   <CheckCircle2 className="h-4 w-4" />
-                  <span>Passo 7 de 8 • 36 ficheiros gerados e verificados</span>
+                  <span>Passo 6 de 7 • 38 ficheiros gerados e verificados</span>
                 </div>
                 <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
                   Pré-visualização do Kit — {generatedKit.dados.nome}
                 </h1>
                 <p className="text-xs text-stone-300">
-                  Layout de capa: <strong>{generatedKit.coverLayoutId || selectedCoverLayoutId}</strong> • Par:{" "}
-                  <strong>{FONT_PAIRS[generatedKit.fontPairId]?.nome}</strong> • Validade local: 6 horas.
+                  Tom:{" "}
+                  <strong>
+                    {TOM_DA_MARCA_SPECS[generatedKit.tom || tom]?.nome}
+                  </strong>{" "}
+                  • Direção:{" "}
+                  <strong>
+                    {generatedKit.estiloVisual === "moderno"
+                      ? "Moderna em camadas"
+                      : "Clássica"}
+                  </strong>{" "}
+                  • Par: <strong>{FONT_PAIRS[generatedKit.fontPairId]?.nome}</strong> • Validade local: 6 horas.
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => setStep("capas")}
+                  onClick={() => setStep("propostas")}
                   className="inline-flex items-center gap-1.5 rounded-xl border border-stone-700 bg-stone-800 px-4 py-2.5 text-xs font-semibold text-stone-200 hover:bg-stone-700"
                 >
                   <ArrowLeft className="h-4 w-4" />
-                  <span>Trocar capa</span>
+                  <span>Voltar às Propostas</span>
                 </button>
                 <button
                   type="button"
@@ -3226,43 +2961,253 @@ export function KitStudioWizard() {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {(
-              [
-                { key: "todas", label: "Todas (36)" },
-                { key: "variantes", label: "Variantes (5)" },
-                { key: "redes", label: "Redes e Perfis (16)" },
-                { key: "favicon", label: "Favicon (6)" },
-                { key: "email", label: "Email (2)" },
-                { key: "impressao", label: "Impressão PDF (2)" },
-                { key: "guia", label: "Guia A4 (1)" },
-                { key: "metadados", label: "Paleta & LEIA-ME (4)" },
-              ] as const
-            ).map((tab) => (
+          {/* Aviso global + Controlos de vista Computador/Telemóvel e Zonas Seguras */}
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-stone-200 bg-white px-5 py-4">
+            <div className="flex items-start gap-2.5 text-xs text-amber-950">
+              <AlertCircle className="h-4 w-4 text-amber-800 shrink-0 mt-0.5" />
+              <p>
+                <strong>Verifique os textos</strong> e as zonas seguras abaixo em vista Computador e Telemóvel. Se precisar de nova versão numa rede específica, clique em <strong>«Regenerar»</strong> na respetiva peça.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <div className="inline-flex rounded-xl border border-stone-300 bg-[#FAF7F2] p-0.5">
+                <button
+                  type="button"
+                  id="btn-viewport-desktop"
+                  aria-pressed={previewViewport === "desktop"}
+                  onClick={() => setPreviewViewport("desktop")}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-bold transition ${
+                    previewViewport === "desktop"
+                      ? "bg-stone-900 text-amber-300"
+                      : "text-stone-700 hover:text-stone-950"
+                  }`}
+                >
+                  <Monitor className="h-3.5 w-3.5" />
+                  <span>Computador</span>
+                </button>
+                <button
+                  type="button"
+                  id="btn-viewport-mobile"
+                  aria-pressed={previewViewport === "mobile"}
+                  onClick={() => setPreviewViewport("mobile")}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-bold transition ${
+                    previewViewport === "mobile"
+                      ? "bg-stone-900 text-amber-300"
+                      : "text-stone-700 hover:text-stone-950"
+                  }`}
+                >
+                  <Smartphone className="h-3.5 w-3.5" />
+                  <span>Telemóvel</span>
+                </button>
+              </div>
+
               <button
-                key={tab.key}
                 type="button"
-                onClick={() => setActiveResultCategory(tab.key)}
-                className={`rounded-xl px-3.5 py-2 text-xs font-bold transition ${
-                  activeResultCategory === tab.key
-                    ? "bg-stone-900 text-stone-50"
-                    : "border border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+                id="btn-toggle-zonas-seguras"
+                aria-pressed={showSafeZonesOnPreview}
+                onClick={() => setShowSafeZonesOnPreview((v) => !v)}
+                className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 font-bold transition ${
+                  showSafeZonesOnPreview
+                    ? "border-emerald-700 bg-emerald-50 text-emerald-950"
+                    : "border-stone-300 bg-white text-stone-700"
                 }`}
               >
-                {tab.label}
+                <Layers className="h-3.5 w-3.5" />
+                <span>Mostrar zonas seguras</span>
               </button>
-            ))}
+            </div>
+          </div>
+
+          {/* Separadores por categoria (total 38 ficheiros) */}
+          <div className="space-y-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              {(
+                [
+                  { key: "todas", label: "Todas (38)" },
+                  { key: "variantes", label: "Variantes (5)" },
+                  { key: "redes", label: "Redes e Perfis (18)" },
+                  { key: "favicon", label: "Favicon (6)" },
+                  { key: "email", label: "Email (2)" },
+                  { key: "impressao", label: "Impressão PDF (2)" },
+                  { key: "guia", label: "Guia A4 (1)" },
+                  { key: "metadados", label: "Paleta & LEIA-ME (4)" },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  id={`tab-categoria-${tab.key}`}
+                  onClick={() => {
+                    setActiveResultCategory(tab.key);
+                    if (tab.key !== "redes") setSubFilterRedes("todas");
+                  }}
+                  className={`rounded-xl px-3.5 py-2 text-xs font-bold transition ${
+                    activeResultCategory === tab.key
+                      ? "bg-stone-900 text-stone-50"
+                      : "border border-stone-300 bg-white text-stone-700 hover:bg-stone-100"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {activeResultCategory === "redes" && (
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="font-semibold text-stone-600">Filtrar redes:</span>
+                {(
+                  [
+                    { key: "todas", label: "Todas as 18 peças" },
+                    { key: "perfis", label: "Perfis e Teste 40 px (9)" },
+                    { key: "capas-posts", label: "Capas, Posts e Stories (9)" },
+                  ] as const
+                ).map((sub) => (
+                  <button
+                    key={sub.key}
+                    type="button"
+                    id={`subtab-redes-${sub.key}`}
+                    onClick={() => setSubFilterRedes(sub.key)}
+                    className={`rounded-lg px-3 py-1.5 font-bold transition ${
+                      subFilterRedes === sub.key
+                        ? "bg-amber-900 text-amber-50"
+                        : "border border-stone-200 bg-white text-stone-700 hover:bg-stone-100"
+                    }`}
+                  >
+                    {sub.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {FORMAT_SPECS.filter(
-              (s) =>
-                activeResultCategory === "todas" ||
-                s.categoria === activeResultCategory
-            ).map((spec) => {
+            {FORMAT_SPECS.filter((s) => {
+              if (
+                activeResultCategory !== "todas" &&
+                s.categoria !== activeResultCategory
+              ) {
+                return false;
+              }
+              if (
+                activeResultCategory === "redes" &&
+                subFilterRedes !== "todas"
+              ) {
+                const cfg = REDES_SOCIAIS_CONFIG[s.id as RedeSocialId];
+                if (subFilterRedes === "perfis") return cfg?.tipoPeca === "perfil";
+                return cfg?.tipoPeca !== "perfil";
+              }
+              return true;
+            }).map((spec) => {
+              const bust = cacheBusters[spec.ficheiro];
               const fileUrl = `/api/kits/${generatedKit.id}?ficheiro=${encodeURIComponent(
                 spec.ficheiro
-              )}`;
+              )}${bust ? `&t=${bust}` : ""}`;
+
+              if (spec.categoria === "redes") {
+                const rede = REDES_SOCIAIS_CONFIG[spec.id as RedeSocialId];
+                const pecaMeta = generatedKit.pecasMetadata?.[spec.id];
+                const textosPedidos =
+                  pecaMeta?.textosPedidos ||
+                  generatedKit.textosPedidosPorPeca?.[spec.id] ||
+                  [];
+                const audit =
+                  pecaMeta?.audit || generatedKit.safeZoneAudits?.[spec.id];
+                const isRegen = regeneratingRedeId === rede.id;
+
+                return (
+                  <div
+                    key={spec.id}
+                    id={`card-kit-peca-${spec.id}`}
+                    className="flex flex-col justify-between rounded-2xl border border-stone-200 bg-white p-4 shadow-2xs space-y-3"
+                  >
+                    <div className="space-y-2.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <h3 className="truncate text-sm font-bold text-stone-950">
+                            {spec.nome}
+                          </h3>
+                          <p className="truncate font-mono text-[11px] text-amber-900">
+                            {spec.ficheiro}
+                          </p>
+                        </div>
+                        <span className="rounded-md border border-stone-200 bg-stone-100 px-2 py-0.5 text-[10px] font-bold text-stone-800 shrink-0">
+                          {spec.medidaLabel}
+                        </span>
+                      </div>
+
+                      <div className="rounded-xl border border-stone-200 bg-[#FAF7F2] p-2.5">
+                        <SafeZoneSocialFrame
+                          rede={rede}
+                          imageUrl={fileUrl}
+                          alt={spec.nome}
+                          viewport={previewViewport}
+                          showSafeZones={showSafeZonesOnPreview}
+                          maxHeightPx={176}
+                        />
+                      </div>
+
+                      {(rede.isCircle || rede.test40px) && (
+                        <Circle40pxTestPreview
+                          imageUrl={fileUrl}
+                          nome={generatedKit.dados.nome}
+                          contraste={audit?.contraste40px}
+                          legivel={audit?.circulo40pxLegivel}
+                        />
+                      )}
+
+                      <div className="flex flex-wrap gap-1 text-[10px]">
+                        <span className="rounded bg-stone-100 px-2 py-0.5 font-semibold text-stone-800">
+                          Gemini {rede.aspectRatioGemini}
+                        </span>
+                        <span
+                          className={`rounded px-2 py-0.5 font-semibold ${
+                            audit?.precisaRegeneracao
+                              ? "bg-red-100 text-red-900"
+                              : "bg-emerald-100 text-emerald-950"
+                          }`}
+                        >
+                          {audit?.precisaRegeneracao
+                            ? "Rever zona segura"
+                            : "Zona segura ✓"}
+                        </span>
+                      </div>
+
+                      <div className="rounded-lg border border-amber-200/80 bg-amber-50/70 px-2.5 py-1.5 text-[11px] text-amber-950">
+                        <span className="font-bold">Verifique os textos: </span>
+                        {textosPedidos.length > 0
+                          ? textosPedidos.map((t) => `«${t}»`).join(" • ")
+                          : "Sem texto adicional (apenas emblema)."}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 border-t border-stone-100 pt-2.5 text-xs">
+                      <a
+                        href={fileUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 font-bold text-stone-800 hover:text-amber-800"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        <span>Abrir</span>
+                      </a>
+
+                      <button
+                        type="button"
+                        id={`btn-regenerar-peca-${spec.id}`}
+                        disabled={isRegen}
+                        onClick={() => handleRegenerateKitPiece(rede.id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-[#FAF7F2] px-2.5 py-1 font-bold text-stone-900 hover:bg-stone-200 disabled:opacity-50"
+                      >
+                        <RefreshCw
+                          className={`h-3 w-3 ${isRegen ? "animate-spin" : ""}`}
+                        />
+                        <span>Regenerar</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
 
               let previewImgUrl: string | null = null;
               if (spec.tipo === "PNG" || spec.tipo === "SVG" || spec.tipo === "ICO") {
@@ -3345,7 +3290,7 @@ export function KitStudioWizard() {
       )}
 
       {/* =====================================================================
-          PASSO 8: ECRÃ FINAL DE DESCARREGAMENTO DO ZIP (36 FICHEIROS)
+          PASSO 7: ECRÃ FINAL DE DESCARREGAMENTO DO ZIP (38 FICHEIROS)
       ===================================================================== */}
       {step === "zip" && generatedKit && (
         <section className="mx-auto max-w-3xl rounded-3xl border border-stone-200 bg-white p-6 sm:p-10 shadow-xs space-y-8">
@@ -3354,13 +3299,13 @@ export function KitStudioWizard() {
               <FileArchive className="h-8 w-8" />
             </div>
             <p className="text-xs font-bold uppercase tracking-widest text-amber-800">
-              Passo 8 de 8 • Entrega Final
+              Passo 7 de 7 • Entrega Final
             </p>
             <h1 className="text-2xl font-bold text-stone-950 sm:text-3xl">
               O seu kit PandoMarca está pronto
             </h1>
             <p className="text-sm text-stone-600 max-w-xl mx-auto">
-              Arquivo determinístico com exatamente <strong>36 ficheiros</strong> nas medidas oficiais de 15 de novembro de 2026, pronto para redes sociais, website, email e gráfica.
+              Arquivo determinístico com exatamente <strong>38 ficheiros</strong> nas medidas oficiais de {REFERENCE_DATE_REDES_PT}, pronto para redes sociais, website, email e gráfica.
             </p>
           </div>
 
@@ -3389,18 +3334,23 @@ export function KitStudioWizard() {
             </div>
             <div>
               <span className="font-bold uppercase tracking-wider text-stone-500">
-                Capa selecionada
+                Tom & Direção visual
               </span>
               <p className="mt-1 font-semibold text-stone-800">
-                {generatedKit.coverLayoutId || selectedCoverLayoutId}
+                Tom {TOM_DA_MARCA_SPECS[generatedKit.tom || tom]?.nome} •{" "}
+                {generatedKit.estiloVisual === "moderno"
+                  ? "Moderna em camadas"
+                  : "Clássica"}
               </p>
             </div>
             <div>
               <span className="font-bold uppercase tracking-wider text-stone-500">
-                Tipografia
+                Vetorização opcional
               </span>
               <p className="mt-1 font-semibold text-stone-800">
-                {FONT_PAIRS[generatedKit.fontPairId]?.nome}
+                {generatedKit.usarVetorizacaoOpcional
+                  ? "Opcional ativa (apenas favicon e impressão PDF)"
+                  : "Desativada (fluxo só imagem)"}
               </p>
             </div>
           </div>
@@ -3413,7 +3363,7 @@ export function KitStudioWizard() {
               className="w-full sm:w-auto inline-flex items-center justify-center gap-3 rounded-2xl bg-stone-900 px-8 py-4 text-base font-bold text-amber-300 shadow-sm transition hover:bg-stone-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900"
             >
               <Download className="h-5 w-5" />
-              <span>Descarregar ZIP (36 ficheiros)</span>
+              <span>Descarregar ZIP (38 ficheiros)</span>
             </a>
 
             <div className="flex flex-wrap items-center justify-center gap-3 text-xs font-semibold">
@@ -3423,7 +3373,7 @@ export function KitStudioWizard() {
                 className="inline-flex items-center gap-1.5 rounded-xl border border-stone-300 bg-white px-4 py-2 text-stone-700 hover:bg-stone-100"
               >
                 <ArrowLeft className="h-3.5 w-3.5" />
-                <span>Rever todas as 36 pré-visualizações</span>
+                <span>Rever todas as 38 pré-visualizações</span>
               </button>
 
               <a

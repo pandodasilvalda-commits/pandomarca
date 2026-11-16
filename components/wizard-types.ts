@@ -6,6 +6,8 @@ import type {
   StyleGroupOverrides,
   StyleId,
 } from "@/lib/formats";
+import type { SafeZoneAuditResult } from "@/lib/capas/safe-zone";
+import type { RedeSocialId, TomDaMarca } from "@/lib/config/redes-sociais";
 import type { PaletteAndTypeProposal } from "@/lib/palette";
 import type { DraftMeta, KitMeta } from "@/lib/storage";
 import type {
@@ -13,22 +15,13 @@ import type {
   OrcamentoKitEstado,
   PublicImagemConfig,
 } from "@/lib/imagem";
-import type { CoverLayoutId, CoverLayoutSpec } from "@/lib/capas/catalog";
-import type { CoverAuditInfo } from "@/lib/capas/composer";
-import type {
-  FinalVariantsA,
-  ReferenceItemInput,
-  StudioLogoOption,
-  DirectionId,
-} from "@/lib/logo-generator/svg-studio";
 
 export type WizardStepId =
   | "acesso"
   | "dados"
   | "logotipo"
-  | "vetor"
   | "paleta"
-  | "capas"
+  | "propostas"
   | "previsualizacao"
   | "zip";
 
@@ -41,91 +34,84 @@ export interface WizardStepMeta {
 
 export const WIZARD_STEPS: WizardStepMeta[] = [
   { id: "acesso", numero: 1, rotuloCurto: "Acesso", titulo: "Código de acesso" },
-  { id: "dados", numero: 2, rotuloCurto: "Dados", titulo: "Dados do negócio" },
-  { id: "logotipo", numero: 3, rotuloCurto: "Logótipo", titulo: "Criar ou carregar logótipo" },
-  { id: "vetor", numero: 4, rotuloCurto: "Vetor", titulo: "Confirmar vetor" },
-  { id: "paleta", numero: 5, rotuloCurto: "Paleta", titulo: "Paleta e tipos" },
-  { id: "capas", numero: 6, rotuloCurto: "Capas", titulo: "Capas em camadas" },
+  {
+    id: "dados",
+    numero: 2,
+    rotuloCurto: "Dados & Tom",
+    titulo: "Dados da marca e tom visual",
+  },
+  {
+    id: "logotipo",
+    numero: 3,
+    rotuloCurto: "Logótipo",
+    titulo: "Gerar ou carregar logótipo",
+  },
+  {
+    id: "paleta",
+    numero: 4,
+    rotuloCurto: "Paleta",
+    titulo: "Paleta e tipografia",
+  },
+  {
+    id: "propostas",
+    numero: 5,
+    rotuloCurto: "Propostas",
+    titulo: "Peças visuais da marca (Moderna + Clássica)",
+  },
   {
     id: "previsualizacao",
-    numero: 7,
+    numero: 6,
     rotuloCurto: "Pré-visualizar",
-    titulo: "Pré-visualização (36 peças)",
+    titulo: "Pré-visualização (38 peças)",
   },
-  { id: "zip", numero: 8, rotuloCurto: "ZIP", titulo: "Descarregar ZIP" },
+  { id: "zip", numero: 7, rotuloCurto: "ZIP", titulo: "Descarregar ZIP" },
 ];
 
-export interface VetorClientState {
-  colorSvg: string;
-  simboloSvg: string;
-  simboloNegativoSvg?: string;
-  monocromaticoSvg: string;
-  negativoSvg: string;
-  negativoTransparenteSvg: string;
+export interface PecaPropostaPreview {
+  id: string;
+  redeId: RedeSocialId;
+  estiloVisual: "moderno" | "classico";
+  tituloProposta: string;
   previewDataUrl: string;
-  preview32DataUrl: string;
-  byteSize: number;
-  maxBytes: number;
-  under200Kb: boolean;
-  colorsHex: string[];
-  colorsCount: number;
-  within8Colors: boolean;
-  pathCount: number;
   width: number;
   height: number;
-  backgroundRemoved: boolean;
-  engine: "vtracer+potrace" | "svg-cleaned";
-}
-
-export interface CapaPreviewItem {
-  spec: CoverLayoutSpec;
-  previewDataUrl: string;
-  audit: CoverAuditInfo;
+  origem: string;
+  fixtureNome?: string;
+  aspectRatioGemini: string;
+  referenciaLogoUsada: boolean;
+  textosPedidos: string[];
+  avisoTextos: string;
+  audit: SafeZoneAuditResult;
 }
 
 export interface StudioSessionSnapshot {
-  version: 2;
+  version: 3;
   step: WizardStepId;
   entradaEscolhida: "A" | "B";
   sessaoId: string;
   dados: BrandData;
+  tom: TomDaMarca;
+  usarVetorizacaoOpcional: boolean;
+  estiloVisual: "moderno" | "classico";
   tresPalavras: string;
   coresPreferidas: string;
   coresEvitar: string;
   rondaAtual: number;
   ajustesUsados: number;
   draft: DraftMeta | null;
-  variantesFinaisA: FinalVariantsA | null;
   propostas: PaletteAndTypeProposal[];
   selectedProposalId: string;
   showAllProposals: boolean;
   customPalette: BrandPalette;
   selectedFontPair: FontPairId;
-  capaRound: number;
-  showAllCapas: boolean;
-  selectedCoverLayoutId: CoverLayoutId;
   kitStyle: StyleId;
-  showKitCatalog: boolean;
   styleOverrides: StyleGroupOverrides;
   generatedKit: KitMeta | null;
   activeResultCategory: FormatCategory | "todas";
-  // Campos opcionais ligeiros quando cabem na sessão
   propostasIA?: [LogoPropostaIA, LogoPropostaIA] | null;
   chosenLogoOriginalDataUrl?: string;
   chosenLogoFixtureNome?: string;
   chosenLogoEstilo?: "classico" | "moderno";
-  vetorState?: VetorClientState | null;
   orcamento?: OrcamentoKitEstado | null;
   imagemConfig?: PublicImagemConfig | null;
-  chosenDirectionId?: DirectionId;
-  referenciasCount?: number;
 }
-
-export type ReserveStudioState = {
-  direcoesA: [StudioLogoOption, StudioLogoOption] | null;
-  chosenDirectionId: DirectionId;
-  refinamentoRound: number;
-  refinamentoOpcoes: [StudioLogoOption, StudioLogoOption] | null;
-  chosenRefinedOption: StudioLogoOption | null;
-  referencias: ReferenceItemInput[];
-};

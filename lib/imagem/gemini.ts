@@ -1,3 +1,4 @@
+import type { GeminiAspectRatio } from "../config/redes-sociais";
 import {
   ImagemContexto,
   ImagemFormato,
@@ -7,11 +8,106 @@ import {
   VetorResultado,
 } from "./types";
 
+export const DEFAULT_GEMINI_MODEL = "gemini-nano-banana-2.1";
+
+export interface NanoBananaGeneratePayload {
+  model: string;
+  endpointPath: string;
+  contents: {
+    role: "user";
+    parts: Array<
+      | { text: string }
+      | {
+          inlineData: {
+            mimeType: string;
+            data: string;
+          };
+        }
+    >;
+  }[];
+  generationConfig: {
+    responseModalities: ["IMAGE"];
+    imageConfig: {
+      aspectRatio: GeminiAspectRatio;
+    };
+  };
+  temReferenciaObrigatoria: boolean;
+}
+
+function isLogoGenerationFormat(formato: ImagemFormato): boolean {
+  return (
+    formato === "logotipo-classico" ||
+    formato === "logotipo-moderno" ||
+    formato === "logotipo-editorial"
+  );
+}
+
 /**
- * Adaptador vazio estruturado para Google Gemini (Imagen / Gemini Image).
- * Suporta envio do logótipo escolhido como referência visual multimodal
- * (`contexto?.logotipoReferencia` + `contexto?.logotipoDna`) para capas e publicações.
- * Nesta fase de desenvolvimento e testes sem custos não executa chamadas de rede.
+ * Constrói o pedido estruturado para o endpoint Gemini Nano Banana 2.1,
+ * garantindo a inclusão multimodal de `logotipoReferencia` nas peças seguintes
+ * (perfis, capas, publicações e stories) e a proporção nativa configurada.
+ */
+export function buildNanoBananaRequest(
+  prompt: string,
+  formato: ImagemFormato,
+  contexto?: ImagemContexto,
+  modeloOverride?: string
+): NanoBananaGeneratePayload {
+  const model =
+    (modeloOverride || process.env.IMAGEM_MODELO || DEFAULT_GEMINI_MODEL).trim() ||
+    DEFAULT_GEMINI_MODEL;
+
+  const precisaLogoRef = !isLogoGenerationFormat(formato);
+  const temRef = Boolean(
+    contexto?.logotipoReferencia && contexto.logotipoReferencia.length > 0
+  );
+
+  if (precisaLogoRef && !temRef) {
+    throw new ImagemProviderError(
+      "invalid_input",
+      `O logótipo escolhido é obrigatório como imagem de referência para gerar "${formato}".`
+    );
+  }
+
+  const parts: NanoBananaGeneratePayload["contents"][0]["parts"] = [{ text: prompt }];
+  if (contexto?.logotipoReferencia && contexto.logotipoReferencia.length > 0) {
+    parts.push({
+      inlineData: {
+        mimeType: contexto.logotipoReferenciaMime || "image/png",
+        data: contexto.logotipoReferencia.toString("base64"),
+      },
+    });
+  }
+
+  const aspectRatio: GeminiAspectRatio =
+    contexto?.aspectRatioNativo ||
+    (formato === "story-instagram"
+      ? "9:16"
+      : formato === "publicacao-instagram-4x5"
+      ? "4:5"
+      : formato === "capa" || formato === "capa-fundo" || formato === "rede-capa"
+      ? "21:9"
+      : "1:1");
+
+  return {
+    model,
+    endpointPath: `/v1beta/models/${model}:generateContent`,
+    contents: [{ role: "user", parts }],
+    generationConfig: {
+      responseModalities: ["IMAGE"],
+      imageConfig: {
+        aspectRatio,
+      },
+    },
+    temReferenciaObrigatoria: temRef,
+  };
+}
+
+/**
+ * Adaptador estruturado para Google Gemini Nano Banana 2.1.
+ * Envia o logótipo escolhido como referência multimodal (`inlineData`)
+ * e solicita a proporção nativa mais próxima com zonas seguras livres.
+ * Nesta fase de desenvolvimento e testes sem custos nunca executa chamadas HTTP.
  */
 export class GeminiImagemProvider implements ImagemProvider {
   readonly nome = "gemini";
@@ -19,10 +115,16 @@ export class GeminiImagemProvider implements ImagemProvider {
   private readonly modelo: string;
 
   constructor(options?: { modelo?: string }) {
-    this.modelo = options?.modelo || process.env.IMAGEM_MODELO || "";
+    this.modelo =
+      (options?.modelo || process.env.IMAGEM_MODELO || DEFAULT_GEMINI_MODEL).trim() ||
+      DEFAULT_GEMINI_MODEL;
   }
 
-  private assertNotLive(): never {
+  getModeloConfigurado(): string {
+    return this.modelo;
+  }
+
+  private assertNotLive(payload?: NanoBananaGeneratePayload): never {
     if (!process.env.GEMINI_API_KEY?.trim()) {
       throw new ImagemProviderError(
         "missing_api_key",
@@ -31,26 +133,37 @@ export class GeminiImagemProvider implements ImagemProvider {
     }
     throw new ImagemProviderError(
       "real_not_enabled",
-      `Adaptador estrutural Gemini (${this.modelo || "sem modelo"}) pronto para ligação futura com referência visual de logótipo; chamadas pagas desativadas nesta versão.`
+      `Adaptador Gemini (${this.modelo}) estruturado com suporte multimodal${payload ? ` (${payload.generationConfig.imageConfig.aspectRatio})` : ""}; chamadas pagas desativadas em desenvolvimento.`,
+      payload
+        ? {
+            modelo: payload.model,
+            aspectRatio: payload.generationConfig.imageConfig.aspectRatio,
+            temReferenciaObrigatoria: payload.temReferenciaObrigatoria,
+          }
+        : undefined
     );
   }
 
   async gerar(
-    _prompt: string,
-    _formato: ImagemFormato,
+    prompt: string,
+    formato: ImagemFormato,
     _n: number,
-    _contexto?: ImagemContexto
+    contexto?: ImagemContexto
   ): Promise<ImagemResultado[]> {
-    // Em ligação futura: anexar contexto?.logotipoReferencia (image/png) como parte multimodal de referência
-    return this.assertNotLive();
+    const payload = buildNanoBananaRequest(prompt, formato, contexto, this.modelo);
+    return this.assertNotLive(payload);
   }
 
   async editar(
-    _imagem: Buffer,
-    _instrucao: string,
-    _contexto?: ImagemContexto
+    imagem: Buffer,
+    instrucao: string,
+    contexto?: ImagemContexto
   ): Promise<ImagemResultado> {
-    return this.assertNotLive();
+    const payload = buildNanoBananaRequest(instrucao, "logotipo-classico", {
+      ...contexto,
+      logotipoReferencia: imagem,
+    }, this.modelo);
+    return this.assertNotLive(payload);
   }
 
   async removerFundo(_imagem: Buffer): Promise<ImagemResultado> {

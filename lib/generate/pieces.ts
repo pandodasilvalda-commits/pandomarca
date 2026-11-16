@@ -3,6 +3,7 @@ import sharp from "sharp";
 import satori from "satori";
 import { Resvg } from "@resvg/resvg-js";
 import { PDFDocument, rgb } from "pdf-lib";
+import type { RedeSocialId } from "../config/redes-sociais";
 import {
   BrandData,
   BrandPalette,
@@ -17,13 +18,15 @@ import {
   getContrastingTextHex,
   hexToRgb,
   mixHex,
-  relativeLuminance,
   rgbToHex,
   rgbToHsl,
 } from "../palette";
-import { CoverLayoutId, getDefaultCoverLayoutIdForStyle } from "../capas/catalog";
-import { renderLayeredCover } from "../capas/composer";
-import { gerarArtePublicacaoDaMarca, type LogoVisualDna } from "../imagem";
+import type { CoverLayoutId } from "../capas/catalog";
+import {
+  gerarPecaRedeSocialComAuditoria,
+  type LogoVisualDna,
+  type PecaGeradaIA,
+} from "../imagem";
 import { adaptVectorSvgForSurface } from "../vetorizar";
 
 const h = React.createElement;
@@ -307,7 +310,7 @@ export async function extractIconSquare(
   const hPx = info.height;
 
   let sourceForIcon = processedPng;
-  // Se o logótipo for horizontal (símbolo à esquerda + texto à direita), procura a coluna transparente entre o símbolo e o texto
+  // 1) Se o logótipo for horizontal (símbolo à esquerda + texto à direita), procura a coluna transparente
   if (w > hPx * 1.35) {
     let splitX = Math.min(w, Math.round(hPx * 0.95));
     const minSearchX = Math.round(w * 0.22);
@@ -337,10 +340,39 @@ export async function extractIconSquare(
     } catch {
       sourceForIcon = processedPng;
     }
+  } else if (hPx >= w * 0.9 && hPx >= 200) {
+    // 2) Se o logótipo for empilhado (emblema em cima + nome em baixo), procura faixa horizontal livre
+    const minSearchY = Math.round(hPx * 0.28);
+    const maxSearchY = Math.min(hPx - 12, Math.round(hPx * 0.66));
+    let seenOpaqueTop = false;
+    let splitY = -1;
+    for (let y = minSearchY; y <= maxSearchY; y++) {
+      let rowOpaque = 0;
+      for (let x = Math.round(w * 0.1); x < Math.round(w * 0.9); x += 2) {
+        if (data[(y * w + x) * 4 + 3] > 28) rowOpaque++;
+      }
+      if (rowOpaque > 3) {
+        seenOpaqueTop = true;
+      } else if (seenOpaqueTop && rowOpaque <= 2) {
+        splitY = y;
+        break;
+      }
+    }
+    if (splitY > 40) {
+      try {
+        const cropped = await sharp(processedPng)
+          .extract({ left: 0, top: 0, width: w, height: splitY })
+          .trim({ threshold: 8 })
+          .toBuffer();
+        sourceForIcon = cropped;
+      } catch {
+        sourceForIcon = processedPng;
+      }
+    }
   }
 
-  // Fit inside 1024x1024 with comfortable padding
-  const inner = 800;
+  // Enquadra em 1024×1024 com margem limpa para círculos e favicons
+  const inner = 780;
   const resized = await sharp(sourceForIcon)
     .resize(inner, inner, {
       fit: "contain",
@@ -360,6 +392,28 @@ export async function extractIconSquare(
     .composite([{ input: resized, gravity: "center" }])
     .png()
     .toBuffer();
+}
+
+export async function resolveOptionalFaviconSourcePng(params: {
+  iconePng: Buffer;
+  simboloSvg?: string;
+  usarVetorizacaoOpcional?: boolean;
+}): Promise<Buffer> {
+  if (params.usarVetorizacaoOpcional && params.simboloSvg?.trim()) {
+    try {
+      const rendered = Buffer.from(
+        new Resvg(params.simboloSvg, {
+          fitTo: { mode: "width", value: 1024 },
+        })
+          .render()
+          .asPng()
+      );
+      return await extractIconSquare(rendered);
+    } catch {
+      return params.iconePng;
+    }
+  }
+  return params.iconePng;
 }
 
 export async function renderHorizontalVariant(params: {
@@ -592,7 +646,7 @@ export function getStyleThemeColors(
   }
 }
 
-export async function renderStyleBackgroundBuffer(params: {
+export async function renderSolidSurfaceBuffer(params: {
   width: number;
   height: number;
   style: StyleId;
@@ -601,172 +655,65 @@ export async function renderStyleBackgroundBuffer(params: {
 }): Promise<Buffer> {
   const { width, height, style, paleta, photoBuffer } = params;
 
-  if (style === "fotografia") {
-    let baseLayer: Buffer;
-    if (photoBuffer && photoBuffer.length > 0) {
-      baseLayer = await sharp(photoBuffer)
-        .resize(width, height, { fit: "cover", position: "centre" })
-        .png()
-        .toBuffer();
-    } else {
-      const fallbackSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-        <defs>
-          <linearGradient id="photoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="${paleta.tinta.hex}" />
-            <stop offset="55%" stop-color="${mixHex(paleta.tinta.hex, paleta.primaria.hex, 0.5)}" />
-            <stop offset="100%" stop-color="${paleta.secundaria.hex}" />
-          </linearGradient>
-        </defs>
-        <rect width="${width}" height="${height}" fill="url(#photoGrad)" />
-        <circle cx="${Math.round(width * 0.78)}" cy="${Math.round(height * 0.28)}" r="${Math.round(Math.min(width, height) * 0.42)}" fill="${paleta.primaria.hex}" fill-opacity="0.28" />
-      </svg>`;
-      baseLayer = await sharp(Buffer.from(fallbackSvg)).resize(width, height).png().toBuffer();
-    }
-
-    const veilSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-      <defs>
-        <linearGradient id="veil" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#0D0C0B" stop-opacity="0.72" />
-          <stop offset="100%" stop-color="#0D0C0B" stop-opacity="0.54" />
-        </linearGradient>
-      </defs>
-      <rect width="${width}" height="${height}" fill="url(#veil)" />
-    </svg>`;
-    const veilPng = await sharp(Buffer.from(veilSvg)).png().toBuffer();
-    return sharp(baseLayer)
-      .composite([{ input: veilPng, top: 0, left: 0 }])
+  if (style === "fotografia" && photoBuffer && photoBuffer.length > 0) {
+    const basePhoto = await sharp(photoBuffer)
+      .resize(width, height, { fit: "cover", position: "centre" })
+      .png()
+      .toBuffer();
+    const darkVeil = await sharp({
+      create: {
+        width,
+        height,
+        channels: 4,
+        background: { r: 14, g: 12, b: 10, alpha: 0.64 },
+      },
+    })
+      .png()
+      .toBuffer();
+    return sharp(basePhoto)
+      .composite([{ input: darkVeil, left: 0, top: 0 }])
       .png()
       .toBuffer();
   }
 
-  if (style === "degrade") {
-    const deepStart = mixHex(paleta.tinta.hex, paleta.primaria.hex, 0.26);
-    const midStop = mixHex(paleta.tinta.hex, paleta.primaria.hex, 0.46);
-    const endStop = mixHex(paleta.tinta.hex, paleta.primaria.hex, 0.68);
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-      <defs>
-        <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="${deepStart}" />
-          <stop offset="52%" stop-color="${midStop}" />
-          <stop offset="100%" stop-color="${endStop}" />
-        </linearGradient>
-      </defs>
-      <rect width="${width}" height="${height}" fill="url(#bgGrad)" />
-      <circle cx="${Math.round(width * 0.88)}" cy="${Math.round(height * 0.18)}" r="${Math.round(Math.max(width, height) * 0.28)}" fill="${paleta.secundaria.hex}" fill-opacity="0.16" />
-    </svg>`;
-    return sharp(Buffer.from(svg)).resize(width, height).png().toBuffer();
+  let bgHex = paleta.primaria.hex;
+  let accentHex = paleta.secundaria.hex;
+  if (style === "degrade" || style === "fotografia") {
+    bgHex = mixHex(paleta.tinta.hex, paleta.primaria.hex, 0.36);
+    accentHex = paleta.secundaria.hex;
+  } else if (style === "padrao" || style === "informativo" || style === "minimal") {
+    bgHex = paleta.papel.hex;
+    accentHex = paleta.primaria.hex;
   }
 
-  if (style === "padrao") {
-    const cell = Math.max(56, Math.round(Math.min(width, height) / 5));
-    const r = Math.round(cell * 0.28);
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-      <defs>
-        <pattern id="brandPat" x="0" y="0" width="${cell}" height="${cell}" patternUnits="userSpaceOnUse">
-          <path d="M ${cell / 2} ${cell * 0.14} C ${cell * 0.72} ${cell * 0.14}, ${cell * 0.86} ${cell * 0.32}, ${cell * 0.86} ${cell * 0.62} L ${cell * 0.86} ${cell * 0.84} L ${cell * 0.14} ${cell * 0.84} L ${cell * 0.14} ${cell * 0.62} C ${cell * 0.14} ${cell * 0.32}, ${cell * 0.28} ${cell * 0.14}, ${cell / 2} ${cell * 0.14} Z" fill="none" stroke="${paleta.primaria.hex}" stroke-width="2" stroke-opacity="0.09" />
-          <circle cx="${cell / 2}" cy="${cell / 2}" r="${r * 0.45}" fill="${paleta.secundaria.hex}" fill-opacity="0.07" />
-        </pattern>
-      </defs>
-      <rect width="${width}" height="${height}" fill="${paleta.papel.hex}" />
-      <rect width="${width}" height="${height}" fill="url(#brandPat)" />
-      <rect x="0" y="${height - Math.max(8, Math.round(height * 0.025))}" width="${width}" height="${Math.max(8, Math.round(height * 0.025))}" fill="${paleta.primaria.hex}" />
-    </svg>`;
-    return sharp(Buffer.from(svg)).resize(width, height).png().toBuffer();
-  }
+  const bgRgb = hexToRgb(bgHex);
+  const accRgb = hexToRgb(accentHex);
+  const accentH = Math.max(6, Math.round(height * 0.03));
 
-  if (style === "informativo") {
-    const barH = Math.max(10, Math.round(height * 0.035));
-    const sideW = Math.max(12, Math.round(width * 0.018));
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-      <rect width="${width}" height="${height}" fill="${paleta.papel.hex}" />
-      <rect x="0" y="0" width="${sideW}" height="${height}" fill="${paleta.primaria.hex}" />
-      <rect x="0" y="${height - barH}" width="${width}" height="${barH}" fill="${paleta.tinta.hex}" />
-    </svg>`;
-    return sharp(Buffer.from(svg)).resize(width, height).png().toBuffer();
-  }
+  const accentBar = await sharp({
+    create: {
+      width,
+      height: accentH,
+      channels: 4,
+      background: { r: accRgb.r, g: accRgb.g, b: accRgb.b, alpha: 1 },
+    },
+  })
+    .png()
+    .toBuffer();
 
-  if (style === "minimal") {
-    const pad = Math.max(12, Math.round(Math.min(width, height) * 0.04));
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-      <rect width="${width}" height="${height}" fill="${paleta.papel.hex}" />
-      <rect x="${pad}" y="${pad}" width="${width - pad * 2}" height="${height - pad * 2}" fill="none" stroke="${paleta.neutro.hex}" stroke-opacity="0.25" stroke-width="1.5" />
-    </svg>`;
-    return sharp(Buffer.from(svg)).resize(width, height).png().toBuffer();
-  }
-
-  const accentH = Math.max(8, Math.round(height * 0.03));
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-    <rect width="${width}" height="${height}" fill="${paleta.primaria.hex}" />
-    <rect x="0" y="${height - accentH}" width="${width}" height="${accentH}" fill="${paleta.secundaria.hex}" />
-  </svg>`;
-  return sharp(Buffer.from(svg)).resize(width, height).png().toBuffer();
-}
-
-async function sampleSurfaceRectHex(
-  bgPng: Buffer,
-  width: number,
-  height: number,
-  x: number,
-  y: number,
-  w: number,
-  hPx: number
-): Promise<{ avgHex: string; minLum: number; maxLum: number }> {
-  const rx = Math.max(0, Math.min(width - 4, Math.round(x)));
-  const ry = Math.max(0, Math.min(height - 4, Math.round(y)));
-  const rw = Math.max(4, Math.min(width - rx, Math.round(w)));
-  const rh = Math.max(4, Math.min(height - ry, Math.round(hPx)));
-
-  const { data } = await sharp(bgPng)
-    .extract({ left: rx, top: ry, width: rw, height: rh })
-    .removeAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
-  const stepX = Math.max(1, Math.floor(rw / 16));
-  const stepY = Math.max(1, Math.floor(rh / 12));
-  let rS = 0;
-  let gS = 0;
-  let bS = 0;
-  let cnt = 0;
-  let minLum = 1;
-  let maxLum = 0;
-
-  for (let py = 0; py < rh; py += stepY) {
-    for (let px = 0; px < rw; px += stepX) {
-      const idx = (py * rw + px) * 3;
-      const r = data[idx];
-      const g = data[idx + 1];
-      const b = data[idx + 2];
-      const hex = rgbToHex({ r, g, b });
-      const lum = relativeLuminance(hex);
-      rS += r;
-      gS += g;
-      bS += b;
-      cnt++;
-      if (lum < minLum) minLum = lum;
-      if (lum > maxLum) maxLum = lum;
-    }
-  }
-
-  const avgHex =
-    cnt > 0
-      ? rgbToHex({
-          r: Math.round(rS / cnt),
-          g: Math.round(gS / cnt),
-          b: Math.round(bS / cnt),
-        })
-      : "#1E100A";
-
-  return { avgHex, minLum, maxLum };
-}
-
-function pickWcagHexOnSurface(preferredHex: string, bgHex: string, minRatio = 4.5): string {
-  if (contrastRatio(preferredHex, bgHex) >= minRatio) return preferredHex;
-  const best = getContrastingTextHex(bgHex, "#FAF8F5", "#1C1917");
-  if (contrastRatio(best, bgHex) >= minRatio) return best;
-  return contrastRatio("#FFFFFF", bgHex) >= contrastRatio("#000000", bgHex)
-    ? "#FFFFFF"
-    : "#000000";
+  return sharp({
+    create: {
+      width,
+      height,
+      channels: 4,
+      background: { r: bgRgb.r, g: bgRgb.g, b: bgRgb.b, alpha: 1 },
+    },
+  })
+    .composite(
+      style === "minimal" ? [] : [{ input: accentBar, left: 0, top: height - accentH }]
+    )
+    .png()
+    .toBuffer();
 }
 
 async function ensureWordmarkContrastOnDarkBg(
@@ -822,6 +769,7 @@ async function prepareFittedLogoElement(params: {
   contrastBgHex?: string;
   vectorizedSvg?: string;
   negativeSvg?: string;
+  usarVetorizacaoOpcional?: boolean;
   targetHeight: number;
   maxWidth: number;
   maxHeight: number;
@@ -832,7 +780,7 @@ async function prepareFittedLogoElement(params: {
   element: React.ReactElement;
 }> {
   let chosenBuf: Buffer;
-  if (params.vectorizedSvg) {
+  if (params.usarVetorizacaoOpcional && params.vectorizedSvg) {
     const surface = params.contrastBgHex || (params.isDarkBg ? "#1E100A" : "#FAF6F0");
     const svgSrc =
       params.isDarkBg && params.negativeSvg ? params.negativeSvg : params.vectorizedSvg;
@@ -870,8 +818,50 @@ async function prepareFittedLogoElement(params: {
   };
 }
 
+function resolveEstiloVisualFromParams(params: {
+  estiloVisual?: "moderno" | "classico";
+  coverLayoutId?: CoverLayoutId;
+  style?: StyleId;
+  logoDna?: LogoVisualDna;
+}): "moderno" | "classico" {
+  if (params.estiloVisual === "moderno" || params.estiloVisual === "classico") {
+    return params.estiloVisual;
+  }
+  if (params.coverLayoutId?.startsWith("classico-")) return "classico";
+  if (params.coverLayoutId?.startsWith("moderno-")) return "moderno";
+  if (params.logoDna?.estiloDirecao === "moderno" || params.logoDna?.estiloDirecao === "classico") {
+    return params.logoDna.estiloDirecao;
+  }
+  if (params.style === "informativo" || params.style === "minimal") return "classico";
+  return "moderno";
+}
+
+export async function renderRedeSocialPiece(params: {
+  redeId: RedeSocialId;
+  estiloVisual: "moderno" | "classico";
+  dados: BrandData;
+  paleta: BrandPalette;
+  processedPng: Buffer;
+  logoDna?: LogoVisualDna;
+  style?: StyleId;
+  sessaoId?: string;
+  bypassCache?: boolean;
+}): Promise<PecaGeradaIA> {
+  return gerarPecaRedeSocialComAuditoria({
+    redeId: params.redeId,
+    estiloVisual: params.estiloVisual,
+    dados: params.dados,
+    paleta: params.paleta,
+    logotipoReferencia: params.processedPng,
+    logotipoDna: params.logoDna,
+    estiloPeca: params.style,
+    sessaoId: params.sessaoId,
+    bypassCache: params.bypassCache,
+  });
+}
+
 export async function renderCoverPiece(params: {
-  id: string;
+  id: RedeSocialId;
   width: number;
   height: number;
   style: StyleId;
@@ -883,36 +873,25 @@ export async function renderCoverPiece(params: {
   isDarkMonochrome: boolean;
   photoBuffer?: Buffer;
   coverLayoutId?: CoverLayoutId;
-  cutoutBuffer?: Buffer;
-  vectorizedSvg?: string;
-  negativeSvg?: string;
+  estiloVisual?: "moderno" | "classico";
   logoDna?: LogoVisualDna;
   sessaoId?: string;
 }): Promise<Buffer> {
-  const layoutId =
-    params.coverLayoutId || getDefaultCoverLayoutIdForStyle(params.style);
-  const res = await renderLayeredCover({
-    coverFormatId: params.id,
-    width: params.width,
-    height: params.height,
-    layoutId,
+  const peca = await renderRedeSocialPiece({
+    redeId: params.id,
+    estiloVisual: resolveEstiloVisualFromParams(params),
     dados: params.dados,
     paleta: params.paleta,
-    fontPairId: params.fontPairId,
     processedPng: params.processedPng,
-    whiteLogoPng: params.whiteLogoPng,
-    vectorizedSvg: params.vectorizedSvg,
-    negativeSvg: params.negativeSvg,
     logoDna: params.logoDna,
-    estiloPeca: params.style,
-    photoBuffer: params.photoBuffer,
-    cutoutBuffer: params.cutoutBuffer,
+    style: params.style,
     sessaoId: params.sessaoId,
   });
-  return res.buffer;
+  return peca.buffer;
 }
 
 export async function renderInstagramPost(params: {
+  redeId?: "ig-publicacao" | "ig-publicacao-1080x1350";
   style: StyleId;
   dados: BrandData;
   paleta: BrandPalette;
@@ -921,322 +900,22 @@ export async function renderInstagramPost(params: {
   whiteLogoPng: Buffer;
   isDarkMonochrome: boolean;
   photoBuffer?: Buffer;
-  vectorizedSvg?: string;
-  negativeSvg?: string;
+  coverLayoutId?: CoverLayoutId;
+  estiloVisual?: "moderno" | "classico";
   logoDna?: LogoVisualDna;
   sessaoId?: string;
 }): Promise<Buffer> {
-  const width = 1080;
-  const height = 1080;
-  const {
-    style,
-    dados,
-    paleta,
-    fontPairId,
-    processedPng,
-    whiteLogoPng,
-    photoBuffer,
-    vectorizedSvg,
-    negativeSvg,
-    logoDna,
-    sessaoId,
-  } = params;
-
-  let bgPng: Buffer;
-  if (style === "fotografia" && photoBuffer && photoBuffer.length > 0) {
-    bgPng = await renderStyleBackgroundBuffer({
-      width,
-      height,
-      style,
-      paleta,
-      photoBuffer,
-    });
-  } else {
-    const art = await gerarArtePublicacaoDaMarca({
-      tipo: "publicacao-instagram",
-      nome: dados.nome,
-      sector: dados.sector,
-      paleta,
-      estiloPeca: style,
-      logotipoReferencia: processedPng,
-      logotipoDna: logoDna,
-      sessaoId,
-    });
-    bgPng = await sharp(art.buffer)
-      .resize(width, height, { fit: "cover", position: "centre" })
-      .png()
-      .toBuffer();
-  }
-
-  // Amostra luminosidade real da zona superior (logótipo) e centro-esquerdo (textos reais)
-  const logoSurface = await sampleSurfaceRectHex(bgPng, width, height, 84, 84, 480, 180);
-  const textSurface = await sampleSurfaceRectHex(bgPng, width, height, 84, 290, 740, 440);
-  const footSurface = await sampleSurfaceRectHex(bgPng, width, height, 84, 820, 620, 140);
-
-  const isLogoDarkBg = relativeLuminance(logoSurface.avgHex) < 0.28;
-  const isTextDarkBg = relativeLuminance(textSurface.avgHex) < 0.3;
-
-  const headlineColor = pickWcagHexOnSurface(
-    isTextDarkBg ? "#FAF8F5" : paleta.tinta.hex,
-    textSurface.avgHex,
-    4.6
-  );
-  const mutedColor = pickWcagHexOnSurface(
-    isTextDarkBg ? "#F4DEC0" : mixHex(paleta.tinta.hex, paleta.neutro.hex, 0.28),
-    textSurface.avgHex,
-    4.5
-  );
-  const pillBg = isLogoDarkBg
-    ? "rgba(250, 248, 245, 0.16)"
-    : mixHex(paleta.primaria.hex, "#FFFFFF", 0.85);
-  const pillText = isLogoDarkBg
-    ? "#FAF8F5"
-    : pickWcagHexOnSurface(paleta.tinta.hex, mixHex(paleta.primaria.hex, "#FFFFFF", 0.85), 4.6);
-  const footerText = pickWcagHexOnSurface(
-    relativeLuminance(footSurface.avgHex) < 0.3 ? "#FAF8F5" : paleta.tinta.hex,
-    footSurface.avgHex,
-    4.5
-  );
-
-  // Véu localizado discreto apenas se o pior píxel sob o texto falhar contraste
-  const worstLum = isTextDarkBg ? textSurface.maxLum : textSurface.minLum;
-  const txtLum = relativeLuminance(headlineColor);
-  const worstRatio = (Math.max(txtLum, worstLum) + 0.05) / (Math.min(txtLum, worstLum) + 0.05);
-  if (worstRatio < 4.5) {
-    const scrimHex = isTextDarkBg ? paleta.tinta.hex : paleta.papel.hex;
-    const scrimRgb = hexToRgb(scrimHex);
-    const veilSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
-      <rect x="64" y="290" width="690" height="440" rx="22" fill="rgb(${scrimRgb.r},${scrimRgb.g},${scrimRgb.b})" fill-opacity="0.72" />
-    </svg>`;
-    bgPng = await sharp(bgPng)
-      .composite([
-        {
-          input: Buffer.from(
-            new Resvg(veilSvg, { fitTo: { mode: "width", value: width } }).render().asPng()
-          ),
-          left: 0,
-          top: 0,
-        },
-      ])
-      .png()
-      .toBuffer();
-  }
-
-  const { pair, fonts } = getSatoriFontsForPair(fontPairId);
-  const servicosList = (dados.servicos || "")
-    .split(/[,;•]+/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .slice(0, 4);
-
-  const fittedPostLogo = await prepareFittedLogoElement({
-    isDarkBg: isLogoDarkBg,
-    processedPng,
-    whiteLogoPng,
-    contrastBgHex: logoSurface.avgHex,
-    vectorizedSvg,
-    negativeSvg,
-    targetHeight: style === "minimal" ? 115 : 142,
-    maxWidth: 480,
-    maxHeight: 165,
+  const peca = await renderRedeSocialPiece({
+    redeId: params.redeId || "ig-publicacao",
+    estiloVisual: resolveEstiloVisualFromParams(params),
+    dados: params.dados,
+    paleta: params.paleta,
+    processedPng: params.processedPng,
+    logoDna: params.logoDna,
+    style: params.style,
+    sessaoId: params.sessaoId,
   });
-
-  // Se o logótipo já contém o nome (dados.simbolo=false) e existe slogan, destaca o slogan em grande sem repetir o nome
-  const hasSeparateHeadline = Boolean(dados.simbolo) || !dados.slogan?.trim();
-  const mainHeadline = hasSeparateHeadline ? dados.nome : dados.slogan;
-  const secondaryLine = hasSeparateHeadline ? (dados.slogan || "").trim() : "";
-  const footerLeft = (dados.website || dados.email || "").trim().replace(/^https?:\/\//i, "");
-  const footerRight = (dados.telefone || dados.morada || "").trim();
-
-  const element = h(
-    "div",
-    {
-      style: {
-        width: "100%",
-        height: "100%",
-        boxSizing: "border-box",
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "space-between",
-        padding: "84px",
-      },
-    },
-    h(
-      "div",
-      {
-        style: {
-          width: "100%",
-          display: "flex",
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-        },
-      },
-      fittedPostLogo.element,
-      (dados.morada || "").trim()
-        ? h(
-            "div",
-            {
-              style: {
-                fontFamily: pair.tituloFamily,
-                fontWeight: 600,
-                fontSize: "22px",
-                color: pillText,
-                backgroundColor: pillBg,
-                padding: "10px 22px",
-                borderRadius: "999px",
-              },
-            },
-            dados.morada.trim()
-          )
-        : null
-    ),
-    h(
-      "div",
-      {
-        style: {
-          width: "74%",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          marginTop: "12px",
-          marginBottom: "24px",
-        },
-      },
-      mainHeadline
-        ? h(
-            "div",
-            {
-              style: {
-                fontFamily: pair.tituloFamily,
-                fontWeight: pair.tituloWeight,
-                fontSize: mainHeadline.length > 26 ? "62px" : "76px",
-                color: headlineColor,
-                lineHeight: 1.08,
-                letterSpacing: "-0.02em",
-              },
-            },
-            mainHeadline
-          )
-        : null,
-      secondaryLine
-        ? h(
-            "div",
-            {
-              style: {
-                fontFamily: pair.textoFamily,
-                fontWeight: 400,
-                fontSize: "34px",
-                color: mutedColor,
-                marginTop: "22px",
-                lineHeight: 1.32,
-              },
-            },
-            secondaryLine
-          )
-        : null,
-      style === "informativo" && servicosList.length > 0
-        ? h(
-            "div",
-            {
-              style: {
-                display: "flex",
-                flexDirection: "row",
-                flexWrap: "wrap",
-                gap: "14px",
-                marginTop: "32px",
-              },
-            },
-            ...servicosList.map((srv, idx) =>
-              h(
-                "div",
-                {
-                  key: String(idx),
-                  style: {
-                    fontFamily: pair.tituloFamily,
-                    fontWeight: pair.tituloWeight,
-                    fontSize: "24px",
-                    color: pillText,
-                    backgroundColor: pillBg,
-                    padding: "12px 22px",
-                    borderRadius: "10px",
-                  },
-                },
-                srv
-              )
-            )
-          )
-        : dados.servicos?.trim() && style !== "minimal"
-        ? h(
-            "div",
-            {
-              style: {
-                fontFamily: pair.tituloFamily,
-                fontWeight: 600,
-                fontSize: "26px",
-                color: isTextDarkBg ? "#F4B858" : paleta.primaria.hex,
-                marginTop: "26px",
-              },
-            },
-            dados.servicos.trim()
-          )
-        : null
-    ),
-    footerLeft || footerRight
-      ? h(
-          "div",
-          {
-            style: {
-              width: "66%",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "flex-start",
-              borderTop: `2px solid ${isTextDarkBg ? "rgba(250,248,245,0.22)" : "rgba(42,24,16,0.16)"}`,
-              paddingTop: "22px",
-              gap: "6px",
-            },
-          },
-          footerLeft
-            ? h(
-                "div",
-                {
-                  style: {
-                    fontFamily: pair.tituloFamily,
-                    fontWeight: pair.tituloWeight,
-                    fontSize: "24px",
-                    color: footerText,
-                  },
-                },
-                footerLeft
-              )
-            : null,
-          footerRight
-            ? h(
-                "div",
-                {
-                  style: {
-                    fontFamily: pair.textoFamily,
-                    fontWeight: 400,
-                    fontSize: "22px",
-                    color: footerText,
-                  },
-                },
-                footerRight
-              )
-            : null
-        )
-      : null
-  );
-
-  const fgSvg = await satori(element, { width, height, fonts });
-  const fgPng = Buffer.from(
-    new Resvg(fgSvg, { fitTo: { mode: "width", value: width } }).render().asPng()
-  );
-
-  return sharp(bgPng)
-    .composite([{ input: fgPng, top: 0, left: 0 }])
-    .png()
-    .toBuffer();
+  return peca.buffer;
 }
 
 export async function renderInstagramStory(params: {
@@ -1248,243 +927,22 @@ export async function renderInstagramStory(params: {
   whiteLogoPng: Buffer;
   isDarkMonochrome: boolean;
   photoBuffer?: Buffer;
-  vectorizedSvg?: string;
-  negativeSvg?: string;
+  coverLayoutId?: CoverLayoutId;
+  estiloVisual?: "moderno" | "classico";
   logoDna?: LogoVisualDna;
   sessaoId?: string;
 }): Promise<Buffer> {
-  const width = 1080;
-  const height = 1920;
-  const {
-    style,
-    dados,
-    paleta,
-    fontPairId,
-    processedPng,
-    whiteLogoPng,
-    photoBuffer,
-    vectorizedSvg,
-    negativeSvg,
-    logoDna,
-    sessaoId,
-  } = params;
-
-  let bgPng: Buffer;
-  if (style === "fotografia" && photoBuffer && photoBuffer.length > 0) {
-    bgPng = await renderStyleBackgroundBuffer({
-      width,
-      height,
-      style,
-      paleta,
-      photoBuffer,
-    });
-  } else {
-    const art = await gerarArtePublicacaoDaMarca({
-      tipo: "story-instagram",
-      nome: dados.nome,
-      sector: dados.sector,
-      paleta,
-      estiloPeca: style,
-      logotipoReferencia: processedPng,
-      logotipoDna: logoDna,
-      sessaoId,
-    });
-    bgPng = await sharp(art.buffer)
-      .resize(width, height, { fit: "cover", position: "centre" })
-      .png()
-      .toBuffer();
-  }
-
-  const logoSurface = await sampleSurfaceRectHex(bgPng, width, height, 92, 290, 560, 210);
-  const textSurface = await sampleSurfaceRectHex(bgPng, width, height, 92, 650, 740, 520);
-  const footSurface = await sampleSurfaceRectHex(bgPng, width, height, 92, 1340, 580, 220);
-
-  const isLogoDarkBg = relativeLuminance(logoSurface.avgHex) < 0.28;
-  const isTextDarkBg = relativeLuminance(textSurface.avgHex) < 0.3;
-
-  const headlineColor = pickWcagHexOnSurface(
-    isTextDarkBg ? "#FAF8F5" : paleta.tinta.hex,
-    textSurface.avgHex,
-    4.6
-  );
-  const mutedColor = pickWcagHexOnSurface(
-    isTextDarkBg ? "#F4DEC0" : mixHex(paleta.tinta.hex, paleta.neutro.hex, 0.28),
-    textSurface.avgHex,
-    4.5
-  );
-  const badgeBg = isTextDarkBg
-    ? "rgba(250, 248, 245, 0.14)"
-    : mixHex(paleta.primaria.hex, "#FFFFFF", 0.85);
-  const badgeText = isTextDarkBg
-    ? "#F4B858"
-    : pickWcagHexOnSurface(paleta.tinta.hex, mixHex(paleta.primaria.hex, "#FFFFFF", 0.85), 4.5);
-  const footColor = pickWcagHexOnSurface(
-    relativeLuminance(footSurface.avgHex) < 0.3 ? "#FAF8F5" : paleta.tinta.hex,
-    footSurface.avgHex,
-    4.5
-  );
-
-  const { pair, fonts } = getSatoriFontsForPair(fontPairId);
-
-  const fittedStoryLogo = await prepareFittedLogoElement({
-    isDarkBg: isLogoDarkBg,
-    processedPng,
-    whiteLogoPng,
-    contrastBgHex: logoSurface.avgHex,
-    vectorizedSvg,
-    negativeSvg,
-    targetHeight: 175,
-    maxWidth: 620,
-    maxHeight: 205,
+  const peca = await renderRedeSocialPiece({
+    redeId: "ig-story",
+    estiloVisual: resolveEstiloVisualFromParams(params),
+    dados: params.dados,
+    paleta: params.paleta,
+    processedPng: params.processedPng,
+    logoDna: params.logoDna,
+    style: params.style,
+    sessaoId: params.sessaoId,
   });
-
-  const hasSeparateHeadline = Boolean(dados.simbolo) || !dados.slogan?.trim();
-  const mainHeadline = hasSeparateHeadline ? dados.nome : dados.slogan;
-  const secondaryLine = hasSeparateHeadline ? (dados.slogan || "").trim() : "";
-
-  const element = h(
-    "div",
-    {
-      style: {
-        width: "100%",
-        height: "100%",
-        boxSizing: "border-box",
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "space-between",
-        paddingTop: "290px",
-        paddingBottom: "320px",
-        paddingLeft: "92px",
-        paddingRight: "92px",
-      },
-    },
-    h(
-      "div",
-      {
-        style: {
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "flex-start",
-        },
-      },
-      fittedStoryLogo.element
-    ),
-    h(
-      "div",
-      {
-        style: {
-          width: "86%",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-        },
-      },
-      mainHeadline
-        ? h(
-            "div",
-            {
-              style: {
-                fontFamily: pair.tituloFamily,
-                fontWeight: pair.tituloWeight,
-                fontSize: mainHeadline.length > 24 ? "74px" : "88px",
-                color: headlineColor,
-                lineHeight: 1.08,
-                letterSpacing: "-0.02em",
-              },
-            },
-            mainHeadline
-          )
-        : null,
-      secondaryLine
-        ? h(
-            "div",
-            {
-              style: {
-                fontFamily: pair.textoFamily,
-                fontWeight: 400,
-                fontSize: "40px",
-                color: mutedColor,
-                marginTop: "26px",
-                lineHeight: 1.32,
-              },
-            },
-            secondaryLine
-          )
-        : null,
-      dados.servicos?.trim() && style !== "minimal"
-        ? h(
-            "div",
-            {
-              style: {
-                fontFamily: pair.tituloFamily,
-                fontWeight: 600,
-                fontSize: "28px",
-                color: badgeText,
-                backgroundColor: badgeBg,
-                padding: "16px 26px",
-                borderRadius: "14px",
-                marginTop: "38px",
-                alignSelf: "flex-start",
-              },
-            },
-            dados.servicos.trim()
-          )
-        : null
-    ),
-    dados.website?.trim() || dados.morada?.trim() || dados.telefone?.trim()
-      ? h(
-          "div",
-          {
-            style: {
-              width: "58%",
-              display: "flex",
-              flexDirection: "column",
-              borderTop: `2px solid ${isTextDarkBg ? "rgba(250,248,245,0.22)" : "rgba(42,24,16,0.18)"}`,
-              paddingTop: "28px",
-              gap: "8px",
-            },
-          },
-          dados.website?.trim()
-            ? h(
-                "div",
-                {
-                  style: {
-                    fontFamily: pair.tituloFamily,
-                    fontWeight: pair.tituloWeight,
-                    fontSize: "28px",
-                    color: footColor,
-                  },
-                },
-                dados.website.trim().replace(/^https?:\/\//i, "")
-              )
-            : null,
-          dados.morada?.trim() || dados.telefone?.trim()
-            ? h(
-                "div",
-                {
-                  style: {
-                    fontFamily: pair.textoFamily,
-                    fontWeight: 400,
-                    fontSize: "24px",
-                    color: footColor,
-                  },
-                },
-                [dados.telefone?.trim(), dados.morada?.trim()].filter(Boolean).join("  •  ")
-              )
-            : null
-        )
-      : null
-  );
-
-  const fgSvg = await satori(element, { width, height, fonts });
-  const fgPng = Buffer.from(
-    new Resvg(fgSvg, { fitTo: { mode: "width", value: width } }).render().asPng()
-  );
-
-  return sharp(bgPng)
-    .composite([{ input: fgPng, top: 0, left: 0 }])
-    .png()
-    .toBuffer();
+  return peca.buffer;
 }
 
 export function renderEmailSignatureHtml(params: {
@@ -1643,6 +1101,9 @@ export async function renderBusinessCardPdf(params: {
   whiteLogoPng: Buffer;
   isDarkMonochrome: boolean;
   photoBuffer?: Buffer;
+  vectorizedSvg?: string;
+  negativeSvg?: string;
+  usarVetorizacaoOpcional?: boolean;
 }): Promise<{ pdfBuffer: Buffer; frontPreviewPng: Buffer }> {
   const pxW = 1075;
   const pxH = 720;
@@ -1656,12 +1117,15 @@ export async function renderBusinessCardPdf(params: {
     processedPng,
     whiteLogoPng,
     photoBuffer,
+    vectorizedSvg,
+    negativeSvg,
+    usarVetorizacaoOpcional,
   } = params;
 
   const { pair, fonts } = getSatoriFontsForPair(fontPairId);
   const theme = getStyleThemeColors(style, paleta);
 
-  const frontBg = await renderStyleBackgroundBuffer({
+  const frontBg = await renderSolidSurfaceBuffer({
     width: pxW,
     height: pxH,
     style,
@@ -1674,6 +1138,9 @@ export async function renderBusinessCardPdf(params: {
     processedPng,
     whiteLogoPng,
     contrastBgHex: theme.bgRefHex,
+    vectorizedSvg,
+    negativeSvg,
+    usarVetorizacaoOpcional,
     targetHeight: !dados.simbolo ? 210 : 185,
     maxWidth: !dados.simbolo ? 780 : 320,
     maxHeight: 250,
@@ -1920,6 +1387,9 @@ export async function renderLetterheadPdf(params: {
   whiteLogoPng: Buffer;
   isDarkMonochrome: boolean;
   photoBuffer?: Buffer;
+  vectorizedSvg?: string;
+  negativeSvg?: string;
+  usarVetorizacaoOpcional?: boolean;
 }): Promise<{ pdfBuffer: Buffer; previewPng: Buffer }> {
   const pxW = 1240;
   const pxH = 1754;
@@ -1933,12 +1403,15 @@ export async function renderLetterheadPdf(params: {
     processedPng,
     whiteLogoPng,
     photoBuffer,
+    vectorizedSvg,
+    negativeSvg,
+    usarVetorizacaoOpcional,
   } = params;
 
   const { pair, fonts } = getSatoriFontsForPair(fontPairId);
   const theme = getStyleThemeColors(style, paleta);
 
-  const headerBg = await renderStyleBackgroundBuffer({
+  const headerBg = await renderSolidSurfaceBuffer({
     width: pxW,
     height: headerH,
     style,
@@ -1951,6 +1424,9 @@ export async function renderLetterheadPdf(params: {
     processedPng,
     whiteLogoPng,
     contrastBgHex: theme.bgRefHex,
+    vectorizedSvg,
+    negativeSvg,
+    usarVetorizacaoOpcional,
     targetHeight: !dados.simbolo ? 128 : 115,
     maxWidth: !dados.simbolo ? 520 : 180,
     maxHeight: 148,

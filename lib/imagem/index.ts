@@ -1,6 +1,17 @@
 import crypto from "crypto";
-import type { CoverLayoutSpec } from "../capas/catalog";
 import {
+  getRedeSocialConfig,
+  TOM_DA_MARCA_SPECS,
+  type RedeSocialId,
+  type TomDaMarca,
+} from "../config/redes-sociais";
+import {
+  cropResizeToRedeSpec,
+  validarZonaSegura,
+  type SafeZoneAuditResult,
+} from "../capas/safe-zone";
+import {
+  BrandData,
   BrandPalette,
   FontPairId,
   SECTORS,
@@ -17,19 +28,21 @@ import {
   verificarERegistarCusto,
 } from "./custo";
 import { FalsoImagemProvider } from "./falso";
-import { GeminiImagemProvider } from "./gemini";
+import { DEFAULT_GEMINI_MODEL, GeminiImagemProvider } from "./gemini";
 import { carregarPrompt, listarPromptsDisponiveis } from "./prompts";
 import { RecraftImagemProvider } from "./recraft";
 import { buildLogoVisualDna } from "./referencia";
 import {
   ImagemConfig,
   ImagemContexto,
+  ImagemFormato,
   ImagemFornecedor,
   ImagemModo,
   ImagemProvider,
   ImagemProviderError,
   ImagemResultado,
   LogoVisualDna,
+  PecaGeradaIA,
 } from "./types";
 
 export * from "./types";
@@ -37,12 +50,20 @@ export * from "./custo";
 export * from "./prompts";
 export * from "./referencia";
 export { FalsoImagemProvider } from "./falso";
-export { GeminiImagemProvider } from "./gemini";
+export {
+  GeminiImagemProvider,
+  DEFAULT_GEMINI_MODEL,
+  buildNanoBananaRequest,
+} from "./gemini";
 export { RecraftImagemProvider } from "./recraft";
+
+export const AVISO_VERIFIQUE_TEXTOS_PT =
+  "Verifique os textos gerados na imagem face aos dados introduzidos; se alguma palavra precisar de correção, clique em «Regenerar».";
 
 export interface PublicImagemConfig {
   modo: ImagemModo;
   fornecedor: ImagemFornecedor | "local";
+  modelo: string;
   limitePorKitEur: number;
   maxRondas: number;
   maxAjustes: number;
@@ -53,6 +74,7 @@ export interface PublicImagemConfig {
 export interface LogoPropostaIA {
   id: string;
   estilo: "classico" | "moderno";
+  tom: TomDaMarca;
   titulo: string;
   subtitulo: string;
   racional: string;
@@ -61,7 +83,10 @@ export interface LogoPropostaIA {
   origem: ImagemResultado["origem"];
   fixtureNome?: string;
   promptUsado: string;
-  permiteTextoNoLogotipo: "apenas_nome_ou_sem_texto" | "sem_texto_nenhum";
+  permiteTextoNoLogotipo:
+    | "apenas_nome_ou_sem_texto"
+    | "sem_texto_nenhum"
+    | "apenas_dados_reais_cliente";
   imagemBase64: string;
   width: number;
   height: number;
@@ -88,7 +113,7 @@ export function getImagemConfig(): ImagemConfig {
   return {
     modo,
     fornecedor,
-    modelo: (process.env.IMAGEM_MODELO || "").trim(),
+    modelo: (process.env.IMAGEM_MODELO || DEFAULT_GEMINI_MODEL).trim(),
     temChaveGemini: Boolean(process.env.GEMINI_API_KEY?.trim()),
     temChaveRecraft: Boolean(process.env.RECRAFT_API_KEY?.trim()),
     limitePorKitEur: getLimitePorKitEurFromEnv(),
@@ -102,6 +127,7 @@ export function getPublicImagemConfig(): PublicImagemConfig {
   return {
     modo: cfg.modo,
     fornecedor: cfg.modo === "falso" ? "local" : cfg.fornecedor || "gemini",
+    modelo: cfg.modelo || DEFAULT_GEMINI_MODEL,
     limitePorKitEur: cfg.limitePorKitEur,
     maxRondas: cfg.maxRondas,
     maxAjustes: cfg.maxAjustes,
@@ -109,7 +135,7 @@ export function getPublicImagemConfig(): PublicImagemConfig {
     etiquetaModo:
       cfg.modo === "falso"
         ? "Modo de demonstração"
-        : `Fornecedor configurado (${cfg.fornecedor || "por definir"})`,
+        : `Fornecedor configurado (${cfg.fornecedor || "gemini"} • ${cfg.modelo})`,
   };
 }
 
@@ -129,6 +155,13 @@ export function decodeBase64ImageInput(dataUrlOrB64: string): Buffer {
   const commaIdx = trimmed.indexOf(",");
   const rawB64 = commaIdx >= 0 ? trimmed.slice(commaIdx + 1) : trimmed;
   return Buffer.from(rawB64, "base64");
+}
+
+function resolveTom(tom?: string): TomDaMarca {
+  if (tom && tom in TOM_DA_MARCA_SPECS) {
+    return tom as TomDaMarca;
+  }
+  return "tradicional";
 }
 
 function getDistinctPalettesForRound(ronda: number): {
@@ -175,10 +208,10 @@ function getDistinctPalettesForRound(ronda: number): {
       tinta: "#2A1810",
     }),
     moderna: buildBrandPalette({
-      primaria: "#172E2C",
+      primaria: "#26150D",
       secundaria: "#D9822B",
-      papel: "#F5F3EE",
-      tinta: "#132321",
+      papel: "#FAF3E1",
+      tinta: "#26150D",
     }),
   };
 }
@@ -188,6 +221,7 @@ export async function gerarPropostasLogotipoRonda(params: {
   nome: string;
   slogan?: string;
   sector?: SectorId;
+  tom?: TomDaMarca;
   tresPalavras?: string;
   coresPreferidas?: string;
   coresEvitar?: string;
@@ -211,6 +245,8 @@ export async function gerarPropostasLogotipoRonda(params: {
   const sector: SectorId =
     params.sector && params.sector in SECTORS ? params.sector : "restauracao";
   const sectorLabel = SECTORS[sector].rotulo;
+  const tom = resolveTom(params.tom);
+  const tomSpec = TOM_DA_MARCA_SPECS[tom];
 
   const orcamentoAtual = lerOrcamentoKit(params.sessaoId, params.limiteOverrideEur);
   const custoPrevisto = CUSTO_UNITARIO_EUR.gerar * 2;
@@ -224,6 +260,8 @@ export async function gerarPropostasLogotipoRonda(params: {
   const promptClassico = carregarPrompt("logotipo-classico", {
     nome: params.nome,
     sector: sectorLabel,
+    tom: tomSpec.nome,
+    tomDescricao: tomSpec.direcaoEstetica,
     coresPreferidas: params.coresPreferidas || "Terracota, ocre e creme",
     tresPalavras: params.tresPalavras || "Tradição, Ofício, Autenticidade",
     coresEvitar: params.coresEvitar || "Néons frios e efeitos 3D",
@@ -232,7 +270,9 @@ export async function gerarPropostasLogotipoRonda(params: {
   const promptModerno = carregarPrompt("logotipo-moderno", {
     nome: params.nome,
     sector: sectorLabel,
-    coresPreferidas: params.coresPreferidas || "Verde pinheiro escuro, dourado e creme",
+    tom: tomSpec.nome,
+    tomDescricao: tomSpec.direcaoEstetica,
+    coresPreferidas: params.coresPreferidas || "Espresso escuro, dourado quente e creme",
     tresPalavras: params.tresPalavras || "Geometria, Clareza, Rigor",
     coresEvitar: params.coresEvitar || "Clichés complexos e gradientes fotorealistas",
   });
@@ -242,7 +282,9 @@ export async function gerarPropostasLogotipoRonda(params: {
     nome: params.nome,
     slogan: params.slogan,
     sector,
+    tom,
     ronda,
+    aspectRatioNativo: "1:1",
     tresPalavras: params.tresPalavras,
     coresPreferidas: params.coresPreferidas,
     coresEvitar: params.coresEvitar,
@@ -269,7 +311,7 @@ export async function gerarPropostasLogotipoRonda(params: {
     quantidade: 2,
     limiteEur: params.limiteOverrideEur,
     contarRonda: true,
-    detalhe: `Ronda ${ronda}: Clássica com símbolo + Moderna tipográfica`,
+    detalhe: `Ronda ${ronda} (${tomSpec.nome}): Clássica + Moderna`,
   });
 
   const palettes = getDistinctPalettesForRound(ronda);
@@ -277,15 +319,10 @@ export async function gerarPropostasLogotipoRonda(params: {
   const propostaClassica: LogoPropostaIA = {
     id: `ia-classica-r${ronda}`,
     estilo: "classico",
+    tom,
     titulo: "Proposta A — Clássica com símbolo",
-    subtitulo:
-      ronda === 1
-        ? "Emblema tradicional com símbolo e tipografia serifada"
-        : ronda === 2
-        ? "Selo clássico em traço gravado com composição compacta"
-        : "Heráldica minimalista de ofício com leitura a 32 px",
-    racional:
-      "Composição com símbolo figurativo equilibrado, borda limpa sem texturas artificiais e contraste pensado para carimbo, fachada e redes.",
+    subtitulo: `Tom ${tomSpec.nome}: emblema figurativo e serifado de ofício`,
+    racional: `Composição com símbolo patrimonial equilibrado para o setor de ${sectorLabel} (${tomSpec.resumo.toLowerCase()}) e ótimo contraste para avatares a 40 px.`,
     ronda,
     origem: imgClassica.origem,
     fixtureNome: imgClassica.fixtureNome,
@@ -301,15 +338,10 @@ export async function gerarPropostasLogotipoRonda(params: {
   const propostaModerna: LogoPropostaIA = {
     id: `ia-moderna-r${ronda}`,
     estilo: "moderno",
-    titulo: "Proposta B — Moderna tipográfica",
-    subtitulo:
-      ronda === 1
-        ? "Monograma geométrico forte e tipo sem serifa contemporâneo"
-        : ronda === 2
-        ? "Marca horizontal limpa com barra de proporção e letra marcante"
-        : "Símbolo minimalista em linhas puras com tipografia contrastada",
-    racional:
-      "Direção geométrica claramente distinta da clássica: paleta própria fria/quente, ausência de ornamentos e excelente comportamento em favicon.",
+    tom,
+    titulo: "Proposta B — Moderna em bloco e contraste",
+    subtitulo: `Tom ${tomSpec.nome}: emblema contemporâneo forte e tipografia limpa`,
+    racional: `Direção contemporânea contrastante em painel escuro, pensada para desdobrar capas e publicações modernas em camadas a partir deste emblema.`,
     ronda,
     origem: imgModerna.origem,
     fixtureNome: imgModerna.fixtureNome,
@@ -333,6 +365,7 @@ export async function ajustarPropostaLogotipo(params: {
   sessaoId: string;
   nome: string;
   sector?: SectorId;
+  tom?: TomDaMarca;
   proposta: LogoPropostaIA;
   instrucao: string;
   ajusteNumero: number;
@@ -347,7 +380,7 @@ export async function ajustarPropostaLogotipo(params: {
   if (!instrucaoLimpa) {
     throw new ImagemProviderError(
       "invalid_input",
-      "Escreva uma instrução de ajuste clara (ex.: «aumentar contraste e espessura do arco»)."
+      "Escreva uma instrução de ajuste clara (ex.: «aumentar contraste e espessura do emblema»)."
     );
   }
 
@@ -355,10 +388,11 @@ export async function ajustarPropostaLogotipo(params: {
   if (!Number.isInteger(ajusteNumero) || ajusteNumero < 1 || ajusteNumero > cfg.maxAjustes) {
     throw new ImagemProviderError(
       "max_adjustments",
-      `Limite de ${cfg.maxAjustes} ajustes atingido. Clique em «Escolher» para avançar para a vetorização.`
+      `Limite de ${cfg.maxAjustes} ajustes atingido. Clique em «Escolher» para avançar com o logótipo.`
     );
   }
 
+  const tom = resolveTom(params.tom || params.proposta.tom);
   const promptAjuste = carregarPrompt("ajuste-logotipo", {
     nome: params.nome,
     instrucao: instrucaoLimpa,
@@ -380,6 +414,7 @@ export async function ajustarPropostaLogotipo(params: {
   const edited = await provider.editar(inputBuf, instrucaoLimpa, {
     nome: params.nome,
     sector: params.sector || "restauracao",
+    tom,
     estilo: params.proposta.estilo,
   });
 
@@ -394,9 +429,10 @@ export async function ajustarPropostaLogotipo(params: {
 
   const propostaAjustada: LogoPropostaIA = {
     ...params.proposta,
+    tom,
     id: `${params.proposta.id}-aj${ajusteNumero}`,
     subtitulo: `Versão afinada (Ajuste ${ajusteNumero}/${cfg.maxAjustes})`,
-    racional: `Aplicado pedido de ajuste: «${instrucaoLimpa}». Pronto para confirmar em vetor.`,
+    racional: `Aplicado pedido de ajuste: «${instrucaoLimpa}». Pronta a servir de referência para todo o kit.`,
     ajusteNumero,
     origem: edited.origem,
     fixtureNome: edited.fixtureNome,
@@ -413,78 +449,58 @@ export async function ajustarPropostaLogotipo(params: {
   };
 }
 
-export interface ArteDaMarcaResult {
-  buffer: Buffer;
-  width: number;
-  height: number;
-  promptUsado: string;
-  permiteTextoNoLogotipo: "apenas_nome_ou_sem_texto" | "sem_texto_nenhum";
-  origem: ImagemResultado["origem"];
-  fixtureNome?: string;
-  dna: LogoVisualDna;
-  referenciaLogoUsada: boolean;
+/**
+ * Extrai estritamente os textos realmente fornecidos pelo cliente para esta peça visual,
+ * garantindo que nenhum dado fictício é inventado e devolvendo a lista exata para o ecrã
+ * de verificação «Verifique os textos».
+ */
+export function buildTextosPedidosParaPeca(
+  dados: BrandData,
+  redeId: RedeSocialId
+): string[] {
+  const cfg = getRedeSocialConfig(redeId);
+  const nome = (dados.nome || "").trim();
+  const slogan = (dados.slogan || "").trim();
+  const servicos = (dados.servicos || "").trim();
+  const morada = (dados.morada || "").trim();
+  const telefone = (dados.telefone || "").trim();
+  const website = (dados.website || "").trim().replace(/^https?:\/\//i, "");
+
+  if (cfg.tipoPeca === "perfil") {
+    // Avatares nascem apenas do emblema (sem texto miúdo para ler bem a 40 px)
+    return [];
+  }
+
+  const lines: string[] = [];
+  if (nome) lines.push(nome);
+  if (slogan) lines.push(slogan);
+
+  if (cfg.tipoPeca === "publicacao" || cfg.tipoPeca === "story") {
+    if (servicos) lines.push(servicos);
+    if (website) lines.push(website);
+  } else {
+    // Capas / cabeçalhos panorâmicos
+    if (redeId === "li-capa-empresa" || redeId === "yt-banner") {
+      if (website) lines.push(website);
+    } else {
+      if (servicos) lines.push(servicos);
+      if (morada) lines.push(morada);
+      if (telefone) lines.push(telefone);
+    }
+  }
+
+  return lines;
 }
 
-const COVER_DIRECTION_MAP: Record<
-  CoverLayoutSpec["id"],
-  { direcaoVisual: string; zonaSegura: string }
-> = {
-  "moderno-texto-atras": {
-    direcaoVisual:
-      "fundo escuro rico e profundo da paleta com brilho quente à direita a envolver os motivos do logótipo (arco, espiga ou monograma geométrico), sem qualquer texto na imagem",
-    zonaSegura:
-      "toda a metade esquerda superior e centro-esquerdo serenos e escuros para sobrepor o logótipo claro e as linhas de contacto; área central horizontal segura no YouTube 1544x423",
-  },
-  "moderno-recorte": {
-    direcaoVisual:
-      "metade esquerda ampla em papel claro texturado com micro-padrão discreto, recortada à direita por um arco curvo envolvente com luz e motivos prolongados do logótipo",
-    zonaSegura:
-      "todo o lado esquerdo até 60% da largura mantido claro, calmo e uniforme para encaixar o logótipo a cores e os dados reais",
-  },
-  "moderno-monolito": {
-    direcaoVisual:
-      "superfície escura texturada com grelha geométrica subtil e plano circular ou monólito de grande escala à direita em tonalidade quente/dourada inspirada no logótipo",
-    zonaSegura:
-      "terço esquerdo limpo para o logótipo em negativo e faixa média-direita suave para leitura dos contactos sem sobrecarga",
-  },
-  "classico-moldura": {
-    direcaoVisual:
-      "papel algodão claro texturado com malha clássica delicada e dois motivos arquitetónicos simétricos do logótipo discretos nas margens laterais",
-    zonaSegura:
-      "centro horizontal amplamente desobstruído e claro para compor o logótipo ao alto e a faixa de texto centrada",
-  },
-  "classico-rotulo": {
-    direcaoVisual:
-      "base de papel artesanal quente com padrão em linha fina prolongando as curvas do logótipo e motivo ilustrativo rico ancorado no canto inferior direito",
-    zonaSegura:
-      "zona esquerda e centro limpas para o selo/rótulo de leitura e logótipo sem tapar elementos do fundo",
-  },
-  "classico-informativo": {
-    direcaoVisual:
-      "composição editorial limpa em papel claro com cantos e filete lateral inspirados no símbolo do logótipo, deixando áreas estruturadas muito legíveis",
-    zonaSegura:
-      "esquerda para logótipo e direita para bloco informativo de serviços, localidade e contactos com contraste alto",
-  },
-};
+const brandPieceCache = new Map<string, PecaGeradaIA>();
+const MAX_PIECE_CACHE = 160;
 
-const STYLE_DESC_MAP: Record<StyleId, string> = {
-  liso: "composição limpa, elegante e direta sobre cor dominante da marca",
-  degrade: "transição suave e luminosa entre as cores principais da marca",
-  padrao: "repetição rítmica discreta nascida do símbolo do logótipo",
-  informativo: "enquadramento claro e organizado para destacar oferta e contactos",
-  fotografia: "cena de ambiente editorial real alinhada com o ofício e os tons da marca",
-  minimal: "espaço respirado amplo com acentos puristas derivados do traço do logótipo",
-};
-
-const brandArtworkCache = new Map<string, ArteDaMarcaResult>();
-const MAX_ARTWORK_CACHE = 96;
-
-function setBrandArtworkCache(key: string, val: ArteDaMarcaResult) {
-  if (brandArtworkCache.size >= MAX_ARTWORK_CACHE) {
-    const firstKey = brandArtworkCache.keys().next().value;
-    if (firstKey) brandArtworkCache.delete(firstKey);
+function setBrandPieceCache(key: string, val: PecaGeradaIA) {
+  if (brandPieceCache.size >= MAX_PIECE_CACHE) {
+    const firstKey = brandPieceCache.keys().next().value;
+    if (firstKey) brandPieceCache.delete(firstKey);
   }
-  brandArtworkCache.set(key, val);
+  brandPieceCache.set(key, val);
 }
 
 function digestBufferShort(buf?: Buffer): string {
@@ -493,63 +509,148 @@ function digestBufferShort(buf?: Buffer): string {
 }
 
 /**
- * Gera (ou obtém de amostra coesa em modo falso) a arte de capa nascida do logótipo escolhido.
- * Passa sempre logotipoReferencia, formas, estilo e paleta para que cada capa pareça da mesma marca.
+ * Pipeline único puro de geração por imagem para as 18 peças sociais:
+ * 1. Exige o logótipo escolhido como referência obrigatória (`logotipoReferencia`).
+ * 2. Constrói o prompt a partir do tom da marca + sector + proporção nativa + zona segura + textos reais.
+ * 3. Pede ao fornecedor (`provider.gerar`), corta/redimensiona às dimensões exactas e valida as zonas seguras.
+ * 4. Guarda `textosPedidos`, aviso «Verifique os textos» e resultado de auditoria (`precisaRegeneracao`).
  */
-export async function gerarArteCapaDaMarca(params: {
-  layout: CoverLayoutSpec;
-  nome: string;
-  sector?: SectorId;
+export async function gerarPecaRedeSocialComAuditoria(params: {
+  redeId: RedeSocialId;
+  estiloVisual: "moderno" | "classico";
+  dados: BrandData;
   paleta: BrandPalette;
-  estiloPeca?: StyleId;
-  logotipoReferencia?: Buffer;
+  logotipoReferencia: Buffer;
   logotipoDna?: LogoVisualDna;
+  estiloPeca?: StyleId;
   sessaoId?: string;
-}): Promise<ArteDaMarcaResult> {
+  bypassCache?: boolean;
+}): Promise<PecaGeradaIA> {
+  if (!params.logotipoReferencia || params.logotipoReferencia.length === 0) {
+    throw new ImagemProviderError(
+      "invalid_input",
+      "O logótipo escolhido é obrigatório como imagem de referência em todas as peças do kit."
+    );
+  }
+
+  const rede = getRedeSocialConfig(params.redeId);
+  const tom = resolveTom(params.dados.tom || params.logotipoDna?.tom);
+  const tomSpec = TOM_DA_MARCA_SPECS[tom];
+  const sector: SectorId =
+    params.dados.sector && params.dados.sector in SECTORS
+      ? params.dados.sector
+      : "restauracao";
+  const sectorLabel = SECTORS[sector].rotulo;
+
   const dna =
     params.logotipoDna ||
     buildLogoVisualDna({
-      nome: params.nome,
-      sector: params.sector,
+      nome: params.dados.nome,
+      sector,
+      tom,
       paleta: params.paleta,
+      estiloDirecao: params.estiloVisual,
     });
 
-  const sector: SectorId =
-    params.sector && params.sector in SECTORS ? params.sector : "restauracao";
-  const sectorLabel = SECTORS[sector].rotulo;
-  const layoutDir =
-    COVER_DIRECTION_MAP[params.layout.id] || COVER_DIRECTION_MAP["moderno-texto-atras"];
+  const textosPedidos = buildTextosPedidosParaPeca(params.dados, params.redeId);
 
   const cacheKey = [
-    "capa",
-    params.layout.id,
-    params.nome.trim().toLowerCase(),
+    params.redeId,
+    params.estiloVisual,
+    tom,
     sector,
-    dna.estiloDirecao,
-    dna.fixtureLogoOrigem || "custom",
+    (params.dados.nome || "").trim().toLowerCase(),
+    textosPedidos.join("|"),
     params.paleta.primaria.hex,
     params.paleta.secundaria.hex,
-    params.paleta.papel.hex,
-    params.paleta.tinta.hex,
-    params.estiloPeca || params.layout.estiloSugerido,
     digestBufferShort(params.logotipoReferencia),
-  ].join("|");
+  ].join("::");
 
-  const cached = brandArtworkCache.get(cacheKey);
-  if (cached) {
-    return cached;
+  if (!params.bypassCache) {
+    const cached = brandPieceCache.get(cacheKey);
+    if (cached) return cached;
   }
 
-  const promptLoaded = carregarPrompt("capa-fundo", {
-    nome: params.nome,
-    sector: sectorLabel,
-    formasDoLogotipo: dna.formasPrincipais,
-    estiloDoLogotipo: dna.estiloEstetico,
-    paleta: `${dna.paletaDescricao} (motivos: ${dna.motivosGraficos.slice(0, 4).join(", ")})`,
-    layoutNome: `${params.layout.nome} (${params.layout.categoria})`,
-    layoutDirecaoVisual: layoutDir.direcaoVisual,
-    zonaSegura: layoutDir.zonaSegura,
-  });
+  const layoutNome =
+    params.estiloVisual === "moderno" ? "Moderna em camadas" : "Clássica editorial";
+  const direcaoVisual =
+    params.estiloVisual === "moderno"
+      ? "composição moderna em camadas de alto contraste com painel limpo para o emblema e área fotográfica/arquitetónica em arco ligada ao sector"
+      : "composição clássica em pergaminho ou papel claro com emblema centrado, filetes finos elegantes e leitura harmónica";
+
+  const textosResumoPrompt =
+    textosPedidos.length > 0
+      ? textosPedidos.map((t) => `«${t}»`).join(" • ")
+      : "Sem texto adicional (apenas emblema centrado)";
+
+  let formatoProvider: ImagemFormato = "rede-capa";
+  let promptLoaded;
+
+  if (rede.tipoPeca === "perfil") {
+    formatoProvider = "rede-avatar";
+    promptLoaded = carregarPrompt("foto-perfil", {
+      nome: params.dados.nome,
+      sector: sectorLabel,
+      tom: tomSpec.nome,
+      tomDescricao: tomSpec.direcaoEstetica,
+      plataforma: rede.plataforma,
+      aspectRatio: rede.aspectRatioGemini,
+      formasDoLogotipo: dna.formasPrincipais,
+      paleta: dna.paletaDescricao,
+    });
+  } else if (rede.id === "ig-story") {
+    formatoProvider = "story-instagram";
+    promptLoaded = carregarPrompt("story-instagram", {
+      nome: params.dados.nome,
+      sector: sectorLabel,
+      tom: tomSpec.nome,
+      tomDescricao: tomSpec.direcaoEstetica,
+      aspectRatio: rede.aspectRatioGemini,
+      layoutNome,
+      estiloPeca: direcaoVisual,
+      formasDoLogotipo: dna.formasPrincipais,
+      estiloDoLogotipo: dna.estiloEstetico,
+      paleta: dna.paletaDescricao,
+      zonaSegura: rede.instrucaoZonaSeguraPrompt,
+      textosPedidos: textosResumoPrompt,
+    });
+  } else if (rede.id === "ig-publicacao" || rede.id === "ig-publicacao-1080x1350") {
+    formatoProvider =
+      rede.id === "ig-publicacao-1080x1350"
+        ? "publicacao-instagram-4x5"
+        : "publicacao-instagram";
+    promptLoaded = carregarPrompt("publicacao-instagram", {
+      nome: params.dados.nome,
+      sector: sectorLabel,
+      tom: tomSpec.nome,
+      tomDescricao: tomSpec.direcaoEstetica,
+      aspectRatio: rede.aspectRatioGemini,
+      layoutNome,
+      estiloPeca: direcaoVisual,
+      formasDoLogotipo: dna.formasPrincipais,
+      estiloDoLogotipo: dna.estiloEstetico,
+      paleta: dna.paletaDescricao,
+      zonaSegura: rede.instrucaoZonaSeguraPrompt,
+      textosPedidos: textosResumoPrompt,
+    });
+  } else {
+    formatoProvider = "rede-capa";
+    promptLoaded = carregarPrompt("capa-fundo", {
+      nome: params.dados.nome,
+      sector: sectorLabel,
+      tom: tomSpec.nome,
+      tomDescricao: tomSpec.direcaoEstetica,
+      plataforma: rede.nome,
+      aspectRatio: rede.aspectRatioGemini,
+      layoutNome,
+      layoutDirecaoVisual: direcaoVisual,
+      formasDoLogotipo: dna.formasPrincipais,
+      estiloDoLogotipo: dna.estiloEstetico,
+      paleta: dna.paletaDescricao,
+      zonaSegura: rede.instrucaoZonaSeguraPrompt,
+      textosPedidos: textosResumoPrompt,
+    });
+  }
 
   const cfg = getImagemConfig();
   if (cfg.modo === "real" && params.sessaoId) {
@@ -557,142 +658,96 @@ export async function gerarArteCapaDaMarca(params: {
       sessaoId: params.sessaoId,
       tipo: "gerar",
       quantidade: 1,
-      detalhe: `Arte de capa nascida do logótipo (${params.layout.id})`,
+      detalhe: `Peça ${rede.id} (${params.estiloVisual}) com referência`,
     });
   }
 
   const provider = getImagemProvider();
-  const resList = await provider.gerar(promptLoaded.promptFinal, "capa-fundo", 1, {
-    nome: params.nome,
+  const resList = await provider.gerar(promptLoaded.promptFinal, formatoProvider, 1, {
+    nome: params.dados.nome,
+    slogan: params.dados.slogan,
     sector,
-    estilo: dna.estiloDirecao,
+    tom,
+    estiloVisual: params.estiloVisual,
+    estilo: params.estiloVisual === "moderno" ? "moderno" : "classico",
     paleta: params.paleta,
     logotipoReferencia: params.logotipoReferencia,
-    logotipoReferenciaMime: params.logotipoReferencia ? "image/png" : undefined,
+    logotipoReferenciaMime: "image/png",
     logotipoDna: dna,
-    layoutId: params.layout.id,
-    estiloPeca: params.estiloPeca || params.layout.estiloSugerido,
+    redeId: params.redeId,
+    aspectRatioNativo: rede.aspectRatioGemini,
+    textosPedidos,
+    larguraAlvo: rede.widthPx,
+    alturaAlvo: rede.heightPx,
   });
 
   const first = resList[0];
-  const out: ArteDaMarcaResult = {
-    buffer: first.buffer,
-    width: first.width,
-    height: first.height,
-    promptUsado: promptLoaded.promptFinal,
-    permiteTextoNoLogotipo: promptLoaded.permiteTextoNoLogotipo,
+  const croppedBuf = await cropResizeToRedeSpec(first.buffer, rede);
+  const audit: SafeZoneAuditResult = await validarZonaSegura(croppedBuf, rede);
+
+  const peca: PecaGeradaIA = {
+    redeId: rede.id,
+    estiloVisual: params.estiloVisual,
+    tituloProposta:
+      params.estiloVisual === "moderno"
+        ? "Proposta 1 — Moderna em camadas"
+        : "Proposta 2 — Clássica editorial",
+    buffer: croppedBuf,
+    width: rede.widthPx,
+    height: rede.heightPx,
+    mimeType: "image/png",
     origem: first.origem,
     fixtureNome: first.fixtureNome,
-    dna,
-    referenciaLogoUsada: Boolean(
-      params.logotipoReferencia && params.logotipoReferencia.length > 0
-    ),
+    promptUsado: promptLoaded.promptFinal,
+    aspectRatioGemini: rede.aspectRatioGemini,
+    referenciaLogoUsada: true,
+    textosPedidos,
+    avisoTextos: AVISO_VERIFIQUE_TEXTOS_PT,
+    audit,
   };
 
-  setBrandArtworkCache(cacheKey, out);
-  return out;
+  setBrandPieceCache(cacheKey, peca);
+  return peca;
 }
 
 /**
- * Gera (ou obtém de amostra coesa em modo falso) a arte de publicação ou story de Instagram
- * nascida diretamente do logótipo escolhido, da sua paleta, formas e estilo visual.
+ * Gera sempre 2 propostas distintas a partir do logótipo escolhido como referência:
+ * - Proposta 1: Moderna em camadas
+ * - Proposta 2: Clássica editorial
  */
-export async function gerarArtePublicacaoDaMarca(params: {
-  tipo: "publicacao-instagram" | "story-instagram";
-  nome: string;
-  sector?: SectorId;
+export async function gerarDuasPropostasVisualMarca(params: {
+  redeId: RedeSocialId;
+  dados: BrandData;
   paleta: BrandPalette;
-  estiloPeca: StyleId;
-  logotipoReferencia?: Buffer;
+  logotipoReferencia: Buffer;
   logotipoDna?: LogoVisualDna;
   sessaoId?: string;
-}): Promise<ArteDaMarcaResult> {
-  const dna =
-    params.logotipoDna ||
-    buildLogoVisualDna({
-      nome: params.nome,
-      sector: params.sector,
+  bypassCache?: boolean;
+}): Promise<[PecaGeradaIA, PecaGeradaIA]> {
+  const [moderna, classica] = await Promise.all([
+    gerarPecaRedeSocialComAuditoria({
+      redeId: params.redeId,
+      estiloVisual: "moderno",
+      dados: params.dados,
       paleta: params.paleta,
-    });
-
-  const sector: SectorId =
-    params.sector && params.sector in SECTORS ? params.sector : "restauracao";
-  const sectorLabel = SECTORS[sector].rotulo;
-  const isStory = params.tipo === "story-instagram";
-
-  const cacheKey = [
-    params.tipo,
-    params.nome.trim().toLowerCase(),
-    sector,
-    dna.estiloDirecao,
-    dna.fixtureLogoOrigem || "custom",
-    params.paleta.primaria.hex,
-    params.paleta.secundaria.hex,
-    params.paleta.papel.hex,
-    params.paleta.tinta.hex,
-    params.estiloPeca,
-    digestBufferShort(params.logotipoReferencia),
-  ].join("|");
-
-  const cached = brandArtworkCache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  const promptLoaded = carregarPrompt(params.tipo, {
-    nome: params.nome,
-    sector: sectorLabel,
-    formasDoLogotipo: dna.formasPrincipais,
-    estiloDoLogotipo: dna.estiloEstetico,
-    paleta: dna.paletaDescricao,
-    estiloPeca: `${params.estiloPeca} — ${STYLE_DESC_MAP[params.estiloPeca] || ""}`,
-    zonaSegura: isStory
-      ? "faixa central 1080x1300 livre entre os 300 px de topo e os 320 px de base"
-      : "margem interior de 84 px com zona superior-central limpa para logótipo e título real",
-  });
-
-  const cfg = getImagemConfig();
-  if (cfg.modo === "real" && params.sessaoId) {
-    verificarERegistarCusto({
+      logotipoReferencia: params.logotipoReferencia,
+      logotipoDna: params.logotipoDna,
       sessaoId: params.sessaoId,
-      tipo: "gerar",
-      quantidade: 1,
-      detalhe: `Arte ${params.tipo} nascida do logótipo`,
-    });
-  }
+      bypassCache: params.bypassCache,
+    }),
+    gerarPecaRedeSocialComAuditoria({
+      redeId: params.redeId,
+      estiloVisual: "classico",
+      dados: params.dados,
+      paleta: params.paleta,
+      logotipoReferencia: params.logotipoReferencia,
+      logotipoDna: params.logotipoDna,
+      sessaoId: params.sessaoId,
+      bypassCache: params.bypassCache,
+    }),
+  ]);
 
-  const provider = getImagemProvider();
-  const resList = await provider.gerar(promptLoaded.promptFinal, params.tipo, 1, {
-    nome: params.nome,
-    sector,
-    estilo: dna.estiloDirecao,
-    paleta: params.paleta,
-    logotipoReferencia: params.logotipoReferencia,
-    logotipoReferenciaMime: params.logotipoReferencia ? "image/png" : undefined,
-    logotipoDna: dna,
-    estiloPeca: params.estiloPeca,
-    larguraAlvo: 1080,
-    alturaAlvo: isStory ? 1920 : 1080,
-  });
-
-  const first = resList[0];
-  const out: ArteDaMarcaResult = {
-    buffer: first.buffer,
-    width: first.width,
-    height: first.height,
-    promptUsado: promptLoaded.promptFinal,
-    permiteTextoNoLogotipo: promptLoaded.permiteTextoNoLogotipo,
-    origem: first.origem,
-    fixtureNome: first.fixtureNome,
-    dna,
-    referenciaLogoUsada: Boolean(
-      params.logotipoReferencia && params.logotipoReferencia.length > 0
-    ),
-  };
-
-  setBrandArtworkCache(cacheKey, out);
-  return out;
+  return [moderna, classica];
 }
 
 export { listarPromptsDisponiveis, lerOrcamentoKit, limparOrcamentoKit };
-

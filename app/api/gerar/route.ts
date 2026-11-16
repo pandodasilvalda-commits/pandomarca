@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_COOKIE_NAME, verifyEntitlementCookie } from "@/lib/access";
-import { getCoverLayoutById } from "@/lib/capas/catalog";
+import {
+  REDES_SOCIAIS_CONFIG,
+  TOM_DA_MARCA_SPECS,
+  type TomDaMarca,
+} from "@/lib/config/redes-sociais";
 import {
   BrandData,
   BrandPaletteHex,
@@ -12,7 +16,7 @@ import {
   StyleGroupOverrides,
   StyleId,
 } from "@/lib/formats";
-import { getImagemConfig } from "@/lib/imagem";
+import { AVISO_VERIFIQUE_TEXTOS_PT } from "@/lib/imagem";
 import { Resvg } from "@resvg/resvg-js";
 import { buildBrandPalette } from "@/lib/palette";
 import { loadDraft } from "@/lib/storage";
@@ -26,7 +30,8 @@ export async function POST(req: NextRequest) {
       {
         ok: false,
         code: "unauthorized",
-        error: "Sessão expirada ou código não validado. Introduza novamente o código de acesso.",
+        error:
+          "Sessão expirada ou código não validado. Introduza novamente o código de acesso.",
       },
       { status: 401 }
     );
@@ -43,7 +48,7 @@ export async function POST(req: NextRequest) {
           ok: false,
           code: "expired_draft",
           error:
-            "O seu rascunho expirou (limite de 2 horas). Por favor volte a carregar ou gerar o logótipo.",
+            "O seu rascunho expirou (limite de 2 horas). Por favor volte a carregar ou escolher o logótipo.",
         },
         { status: 410 }
       );
@@ -54,7 +59,8 @@ export async function POST(req: NextRequest) {
         {
           ok: false,
           code: "not_found",
-          error: "Rascunho de logótipo não encontrado. Recomece o passo do logótipo.",
+          error:
+            "Rascunho de logótipo não encontrado. Recomece o passo do logótipo.",
         },
         { status: 404 }
       );
@@ -78,9 +84,16 @@ export async function POST(req: NextRequest) {
         ? (rawDados.sector as SectorId)
         : "restauracao";
 
+    const rawTom = rawDados.tom ?? loaded.meta.tom ?? loaded.meta.logoDna?.tom;
+    const tom: TomDaMarca =
+      typeof rawTom === "string" && rawTom in TOM_DA_MARCA_SPECS
+        ? (rawTom as TomDaMarca)
+        : "tradicional";
+
     const dados: BrandData = {
       nome,
       sector,
+      tom,
       simbolo: Boolean(rawDados.simbolo),
       slogan: String(rawDados.slogan || "").trim(),
       pessoa: String(rawDados.pessoa || "").trim(),
@@ -111,11 +124,6 @@ export async function POST(req: NextRequest) {
         ? (body.kitStyle as StyleId)
         : SECTORS[sector].recomendacoes.capas[0];
 
-    const coverLayoutSpec =
-      typeof body.coverLayoutId === "string" && body.coverLayoutId
-        ? getCoverLayoutById(body.coverLayoutId)
-        : null;
-
     const rawOverrides = body.styleOverrides || {};
     const styleOverrides: StyleGroupOverrides = {
       capas:
@@ -144,17 +152,16 @@ export async function POST(req: NextRequest) {
           : kitStyle,
     };
 
-    const imgCfg = getImagemConfig();
-    const groupsRequiringUpload =
-      imgCfg.modo === "real"
-        ? (["capas", "publicacao", "story", "cartao", "papel"] as const)
-        : (["publicacao", "story", "cartao", "papel"] as const);
-    const visualGroupsUsingPhoto = groupsRequiringUpload.some(
+    // Peças sociais são 100% geração de imagem; foto de utilizador só se aplica ao estacionário se selecionado «Fotografia»
+    const stationeryGroupsUsingPhoto = (["cartao", "papel"] as const).some(
       (k) => styleOverrides[k] === "fotografia"
     );
 
     let photoBuffer: Buffer | undefined;
-    if (typeof body.photoDataUrl === "string" && body.photoDataUrl.startsWith("data:image/")) {
+    if (
+      typeof body.photoDataUrl === "string" &&
+      body.photoDataUrl.startsWith("data:image/")
+    ) {
       const base64Part = body.photoDataUrl.split(",")[1];
       if (base64Part) {
         photoBuffer = Buffer.from(base64Part, "base64");
@@ -162,27 +169,46 @@ export async function POST(req: NextRequest) {
     }
 
     let cutoutBuffer: Buffer | undefined;
-    if (typeof body.cutoutDataUrl === "string" && body.cutoutDataUrl.startsWith("data:image/")) {
+    if (
+      typeof body.cutoutDataUrl === "string" &&
+      body.cutoutDataUrl.startsWith("data:image/")
+    ) {
       const base64Part = body.cutoutDataUrl.split(",")[1];
       if (base64Part) {
         cutoutBuffer = Buffer.from(base64Part, "base64");
       }
     }
 
-    if (visualGroupsUsingPhoto && (!photoBuffer || photoBuffer.length === 0)) {
+    if (
+      stationeryGroupsUsingPhoto &&
+      (!photoBuffer || photoBuffer.length === 0)
+    ) {
       return NextResponse.json(
         {
           ok: false,
           code: "missing_photo",
           error:
-            "Escolheu o estilo «Fotografia», mas ainda não carregou uma imagem. Carregue uma fotografia de fundo ou escolha outro estilo para prosseguir.",
+            "Escolheu o estilo «Fotografia» para o estacionário, mas ainda não carregou uma imagem.",
         },
         { status: 400 }
       );
     }
 
+    const estiloVisual: "moderno" | "classico" | undefined =
+      body.estiloVisual === "moderno" || body.estiloVisual === "classico"
+        ? body.estiloVisual
+        : loaded.meta.estiloVisualEscolhido;
+
+    const usarVetorizacaoOpcional =
+      typeof body.usarVetorizacaoOpcional === "boolean"
+        ? body.usarVetorizacaoOpcional
+        : Boolean(loaded.meta.usarVetorizacaoOpcional);
+
     let customWhiteLogoPng: Buffer | undefined;
-    if (loaded.meta.variantesEntradaA?.negativoTransparenteSvg) {
+    if (
+      usarVetorizacaoOpcional &&
+      loaded.meta.variantesEntradaA?.negativoTransparenteSvg
+    ) {
       try {
         const resvgWhite = new Resvg(
           loaded.meta.variantesEntradaA.negativoTransparenteSvg,
@@ -206,7 +232,10 @@ export async function POST(req: NextRequest) {
       customIconPng: loaded.iconPng,
       customWhiteLogoPng,
       vectorizedSvg,
+      simboloSvg: loaded.meta.simboloSvg,
       negativeSvg,
+      usarVetorizacaoOpcional,
+      estiloVisual,
       logoDna: loaded.meta.logoDna,
       sessaoId: loaded.meta.sessaoImagemId,
       isDarkMonochrome: loaded.meta.isDarkMonochrome,
@@ -214,7 +243,6 @@ export async function POST(req: NextRequest) {
       paleta,
       fontPairId,
       kitStyle,
-      coverLayoutId: coverLayoutSpec?.id,
       styleOverrides,
       photoBuffer,
       cutoutBuffer,
@@ -224,6 +252,8 @@ export async function POST(req: NextRequest) {
       ok: true,
       kit: result.meta,
       downloadUrl: `/api/kits/${result.meta.id}?download=1`,
+      redesConfig: REDES_SOCIAIS_CONFIG,
+      avisoTextos: AVISO_VERIFIQUE_TEXTOS_PT,
     });
   } catch (err) {
     const msg =

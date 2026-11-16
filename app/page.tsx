@@ -25,10 +25,10 @@ export default function HomePage() {
               </span>
             </div>
             <h1 className="text-4xl font-bold tracking-tight text-stone-950 sm:text-5xl lg:text-[3.35rem] leading-[1.08]">
-              Do logótipo ao kit completo de marca em 36 ficheiros exactos.
+              Do logótipo ao kit completo de marca em 38 ficheiros exatos.
             </h1>
             <p className="text-lg text-stone-600 leading-relaxed max-w-2xl">
-              O <strong>PandoMarca</strong> parte de um logótipo criado de raiz ou já existente e entrega o kit completo de ficheiros de que uma PME portuguesa precisa para se apresentar: redes sociais, favicon, assinatura de email, cartão de visita, papel de carta A4 e guia de marca de uma página.
+              O <strong>PandoMarca</strong> parte de um logótipo gerado de raiz ou carregado por si e utiliza geração de imagem guiada pelo mesmo emblema, paleta e tom visual para entregar os 38 ficheiros que uma PME precisa: redes sociais com zonas seguras verificadas, favicon, assinatura de email, estacionário e guia de marca.
             </p>
 
             <div className="flex flex-wrap items-center gap-4 pt-2">
@@ -54,7 +54,7 @@ export default function HomePage() {
                 id="hero-cta-formatos"
                 className="inline-flex items-center gap-1.5 px-3 py-3 text-sm font-semibold text-stone-700 underline decoration-stone-300 underline-offset-4 hover:text-stone-950"
               >
-                <span>Ver lista dos 36 formatos</span>
+                <span>Ver lista dos 38 formatos</span>
               </Link>
             </div>
           </div>
@@ -73,7 +73,7 @@ export default function HomePage() {
                 </div>
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3.5 py-1 text-xs font-bold text-amber-950">
                   <FileArchive className="h-3.5 w-3.5" />
-                  36 ficheiros
+                  38 ficheiros
                 </span>
               </div>
 
@@ -86,10 +86,10 @@ export default function HomePage() {
                 </li>
                 <li className="flex items-start justify-between gap-2">
                   <span className="font-medium text-stone-900">
-                    Redes sociais e perfis (FB, IG, X, YT, LI, WA, Google)
+                    Redes sociais e perfis (FB, IG, LI, YT, X, Google, WA, TikTok)
                   </span>
                   <span className="rounded-md bg-white px-2.5 py-0.5 text-xs font-semibold text-stone-700 border border-stone-200 shrink-0">
-                    16 PNG
+                    18 PNG
                   </span>
                 </li>
                 <li className="flex items-start justify-between gap-2">
@@ -127,8 +127,8 @@ export default function HomePage() {
               </ul>
 
               <div className="rounded-xl bg-stone-900 p-4 text-xs text-stone-200 leading-relaxed">
-                <strong className="text-amber-300">Regra das 2 escolhas:</strong>{" "}
-                em cada passo criativo vê sempre duas propostas claramente distintas lado a lado, com opção de pedir mais ou abrir o catálogo completo dos 6 estilos.
+                <strong className="text-amber-300">Identidade coerente só por imagem:</strong>{" "}
+                o logótipo aprovado passa a ser referência visual obrigatória em todas as capas, publicações (1:1 e 4:5), stories e perfis (1 Moderna em camadas + 1 Clássica), com corte exato e auditoria de zonas seguras.
               </div>
             </div>
           </div>
@@ -141,13 +141,13 @@ export default function HomePage() {
           <div className="space-y-4">
             <div className="inline-flex items-center gap-2 rounded-lg bg-amber-100/80 px-3 py-1.5 text-xs font-bold text-amber-950">
               <PenTool className="h-3.5 w-3.5" />
-              Entrada A — Logótipo de Raiz
+              Entrada A — Logótipo de Raiz por Imagem
             </div>
             <h2 className="text-2xl font-bold text-stone-900">
-              Criar um logótipo de estúdio a partir do zero
+              Gerar um logótipo de marca adaptado ao tom e setor
             </h2>
             <p className="text-sm text-stone-600 leading-relaxed">
-              Responda ao questionário da marca, indique palavras-chave, cores preferidas e cores a evitar, e carregue de 1 a 5 imagens de referência com nota do que lhe agrada. Compare 2 direções distintas, refine até 3 rondas e obtenha as variantes horizontal, vertical, símbolo, monocromático e negativo.
+              Preencha os dados da empresa, escolha o tom visual da marca (Tradicional, Premium, Jovem, Técnico, Natural ou Divertido), compare 2 direções distintas por ronda e faça ajustes diretos por instrução antes de usar o logótipo aprovado como referência de todo o kit.
             </p>
           </div>
           <div className="mt-6 pt-4 border-t border-stone-100">
@@ -171,7 +171,7 @@ export default function HomePage() {
               Partir de um ficheiro PNG, JPG ou SVG (até 8 MB)
             </h2>
             <p className="text-sm text-stone-600 leading-relaxed">
-              Analisamos a transparência, removemos automaticamente fundos de cor lisa ligados à margem (mantendo o branco fechado no interior do desenho), extraímos a paleta, verificamos a nitidez e geramos todas as variantes e os 36 formatos. Inclui o ensaio <strong>Forno da Vilariça</strong> pronto a testar.
+              Analisamos a transparência, removemos automaticamente fundos de cor lisa ligados à margem (preservando o branco interior), extraímos a paleta e usamos o seu logótipo como referência obrigatória para gerar os 38 ficheiros. Inclui o ensaio <strong>Forno da Vilariça</strong> pronto a testar.
             </p>
           </div>
           <div className="mt-6 pt-4 border-t border-stone-100">
@@ -196,7 +196,7 @@ export default function HomePage() {
             Duas formas de acesso, o mesmo kit completo
           </h2>
           <p className="text-base text-stone-600">
-            O PandoMarca disponibiliza duas modalidades de acesso com as mesmas funcionalidades. Ambas entregam exactamente o mesmo arquivo ZIP de 36 ficheiros.
+            O PandoMarca disponibiliza duas modalidades de acesso com as mesmas funcionalidades. Ambas entregam exatamente o mesmo arquivo ZIP de 38 ficheiros.
           </p>
         </div>
 
@@ -254,24 +254,24 @@ export default function HomePage() {
         <div className="grid gap-6 md:grid-cols-2 text-sm text-stone-700">
           <ul className="space-y-2.5">
             <li>
-              • <strong>Entrada A</strong>: duas propostas claramente distintas (clássica com símbolo vs moderna tipográfica), rondas de afinamento e confirmação vetorial com leitura a 32 px.
+              • <strong>Entrada A</strong>: duas propostas distintas por ronda (clássica com símbolo vs moderna) geradas segundo o tom visual da marca, com rondas adicionais e ajustes diretos por instrução.
             </li>
             <li>
-              • <strong>Entrada B</strong>: carregue o logótipo existente com limpeza automática de fundo liso ligado à margem, extração da paleta e preparação vetorial.
+              • <strong>Entrada B</strong>: carregue o logótipo existente com limpeza automática de fundo liso ligado à margem e extração imediata da paleta cromática.
             </li>
             <li>
-              • <strong>Variantes e identidade</strong>: cinco versões do logótipo geradas a partir do vetor confirmado, com paleta harmonizada e par tipográfico editorial.
+              • <strong>Avatares em círculo testados a 40 px</strong>: todas as fotos de perfil (Facebook, Instagram, LinkedIn, YouTube, X, Google, WhatsApp e TikTok) nascem do emblema do logótipo aprovado.
             </li>
           </ul>
           <ul className="space-y-2.5">
             <li>
-              • <strong>Capas e publicações coerentes</strong>: propostas Moderna e Clássica nascidas do seu logótipo, respeitando as zonas seguras por plataforma e apenas os dados reais preenchidos.
+              • <strong>Propostas Moderna e Clássica + Zonas Seguras</strong>: compare lado a lado em computador ou telemóvel, valide zonas seguras (Story 250 px, YouTube 1546×423) e verifique os textos reais com botão «Regenerar».
             </li>
             <li>
-              • <strong>Estacionário e guia de marca</strong>: assinatura de email HTML, cartão de visita (91×61 mm) e papel de carta A4 para impressão, além de guia de marca de uma página.
+              • <strong>Estacionário e guia de marca</strong>: assinatura de email HTML, cartão de visita (91×61 mm) e papel de carta A4 para impressão (com vetorização opcional), além de guia de marca A4.
             </li>
             <li>
-              • <strong>Pré-visualização e entrega final</strong>: confirme todas as 36 peças no computador ou telemóvel antes de descarregar o arquivo ZIP completo.
+              • <strong>Pré-visualização e entrega final</strong>: valide todas as 38 peças e descarregue o arquivo ZIP completo sem marcas de corte indevidas nas redes sociais.
             </li>
           </ul>
         </div>

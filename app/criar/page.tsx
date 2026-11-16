@@ -4,7 +4,7 @@ import { KitStudioWizard } from "@/components/kit-studio-wizard";
 export const metadata = {
   title: "Criar Kit de Marca — PandoMarca | PandoWeb",
   description:
-    "Crie um logótipo de raiz (Entrada A) ou carregue o seu logótipo existente (Entrada B) e gere os 36 ficheiros oficiais do kit de marca.",
+    "Crie um logótipo de raiz (Entrada A) ou carregue o seu logótipo existente (Entrada B) e gere os 38 ficheiros oficiais do kit de marca.",
 };
 
 export default function CriarKitPage() {

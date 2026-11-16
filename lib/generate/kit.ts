@@ -1,5 +1,12 @@
 import JSZip from "jszip";
 import {
+  getRedeSocialConfig,
+  REDES_SOCIAIS_LIST,
+  REFERENCE_DATE_REDES_PT,
+  type RedeSocialId,
+  type TomDaMarca,
+} from "../config/redes-sociais";
+import {
   BrandData,
   BrandPalette,
   FONT_PAIRS,
@@ -15,18 +22,29 @@ import {
   extractIconSquare,
   renderBrandGuidePdf,
   renderBusinessCardPdf,
-  renderCoverPiece,
   renderEmailSignatureHtml,
   renderHorizontalVariant,
-  renderInstagramPost,
-  renderInstagramStory,
   renderLetterheadPdf,
+  renderRedeSocialPiece,
   renderSignatureLogo,
   renderSquareOnBackground,
+  resolveOptionalFaviconSourcePng,
 } from "./pieces";
-import { createRandomId, KIT_TTL_MS, KitMeta, saveKit } from "../storage";
+import {
+  createRandomId,
+  KIT_TTL_MS,
+  KitMeta,
+  KitPecaMeta,
+  loadDraft,
+  loadKitFile,
+  loadKitMeta,
+  saveKit,
+  updateKitMetaAndFile,
+} from "../storage";
+import type { SafeZoneAuditResult } from "../capas/safe-zone";
 import type { CoverLayoutId } from "../capas/catalog";
-import type { LogoVisualDna } from "../imagem";
+import type { LogoVisualDna, PecaGeradaIA } from "../imagem";
+import { vetorizarImagemLocal } from "../vetorizar";
 
 export interface GenerateKitInput {
   draftId?: string;
@@ -34,7 +52,10 @@ export interface GenerateKitInput {
   customIconPng?: Buffer;
   customWhiteLogoPng?: Buffer;
   vectorizedSvg?: string;
+  simboloSvg?: string;
   negativeSvg?: string;
+  usarVetorizacaoOpcional?: boolean;
+  estiloVisual?: "moderno" | "classico";
   logoDna?: LogoVisualDna;
   sessaoId?: string;
   isDarkMonochrome: boolean;
@@ -56,11 +77,32 @@ export interface GeneratedKitResult {
 }
 
 export class KitGenerationError extends Error {
-  code: "missing_photo" | "invalid_input";
-  constructor(code: "missing_photo" | "invalid_input", message: string) {
+  code: "missing_photo" | "invalid_input" | "not_found";
+  constructor(code: "missing_photo" | "invalid_input" | "not_found", message: string) {
     super(message);
     this.code = code;
   }
+}
+
+function resolveEstiloVisualKit(input: {
+  estiloVisual?: "moderno" | "classico";
+  coverLayoutId?: CoverLayoutId;
+  kitStyle?: StyleId;
+  logoDna?: LogoVisualDna;
+}): "moderno" | "classico" {
+  if (input.estiloVisual === "moderno" || input.estiloVisual === "classico") {
+    return input.estiloVisual;
+  }
+  if (input.coverLayoutId?.startsWith("classico-")) return "classico";
+  if (input.coverLayoutId?.startsWith("moderno-")) return "moderno";
+  if (
+    input.logoDna?.estiloDirecao === "moderno" ||
+    input.logoDna?.estiloDirecao === "classico"
+  ) {
+    return input.logoDna.estiloDirecao;
+  }
+  if (input.kitStyle === "informativo" || input.kitStyle === "minimal") return "classico";
+  return "moderno";
 }
 
 function renderPaletteSampleSvg(paleta: BrandPalette, brandName: string): string {
@@ -119,8 +161,9 @@ function renderReadmeTxt(dados: BrandData, slug: string): string {
 ============================================================
 Marca: ${dados.nome}
 Pasta do kit: pandomarca-${slug}
+Data de referência das medidas: ${REFERENCE_DATE_REDES_PT}
 
-Este arquivo contém exactamente 36 ficheiros prontos a usar nas redes sociais,
+Este arquivo contém exactamente 38 ficheiros prontos a usar nas redes sociais,
 no seu website, no seu cliente de email e em gráfica (impressão).
 
 ESTRUTURA DE PASTAS E FICHEIROS:
@@ -132,23 +175,25 @@ ESTRUTURA DE PASTAS E FICHEIROS:
    - fundo-claro.png        : Aplicação sobre fundo claro a 1200×1200 px.
    - fundo-escuro.png       : Aplicação sobre fundo escuro a 1200×1200 px.
 
-2. Redes sociais e perfis (16 ficheiros)
-   - facebook/foto-de-perfil.png          (320×320 px)
-   - facebook/capa.png                    (851×315 px)
-   - instagram/foto-de-perfil.png         (320×320 px)
-   - instagram/publicacao-1080.png        (1080×1080 px)
-   - instagram/story-1080x1920.png        (1080×1920 px)
-   - x/foto-de-perfil.png                 (400×400 px)
-   - x/cabecalho.png                      (1500×500 px)
-   - youtube/foto-de-perfil.png           (800×800 px)
-   - youtube/banner.png                   (2560×1440 px, zona segura centrada)
-   - linkedin/perfil-pessoal.png          (400×400 px)
+2. Redes sociais e perfis (18 ficheiros — gerados com o logótipo como referência e zonas seguras verificadas)
+   - facebook/foto-de-perfil.png          (720×720 px, círculo testado a 40 px)
+   - facebook/capa.png                    (1640×624 px, zona segura móvel centrada)
+   - instagram/foto-de-perfil.png         (320×320 px, círculo testado a 40 px)
+   - instagram/publicacao-1080x1350.png   (1080×1350 px, formato vertical 4:5)
+   - instagram/publicacao-1080.png        (1080×1080 px, formato quadrado 1:1)
+   - instagram/story-1080x1920.png        (1080×1920 px, 250 px topo e base livres)
+   - linkedin/perfil-pessoal.png          (400×400 px, círculo testado a 40 px)
    - linkedin/capa-pessoal.png            (1584×396 px)
-   - linkedin/perfil-empresa.png          (400×400 px)
-   - linkedin/capa-empresa.png            (1512×256 px)
-   - whatsapp-business/foto-de-perfil.png (640×640 px, fundo opaco)
+   - linkedin/perfil-empresa.png          (400×400 px, página de empresa)
+   - linkedin/capa-empresa.png            (1128×191 px, capa da página)
+   - youtube/foto-de-perfil.png           (800×800 px, avatar circular)
+   - youtube/banner.png                   (2560×1440 px, zona segura central 1546×423 px)
+   - x/foto-de-perfil.png                 (400×400 px, círculo testado a 40 px)
+   - x/cabecalho.png                      (1500×500 px)
    - google-business/logotipo.png         (720×720 px)
    - google-business/capa.png             (1024×576 px)
+   - whatsapp-business/foto-de-perfil.png (640×640 px, fundo opaco)
+   - tiktok/foto-de-perfil.png            (200×200 px, círculo testado a 40 px)
 
 3. favicon/ (6 ficheiros para o website)
    - favicon.ico            : Multi-resolução com 16×16, 32×32 e 48×48 px.
@@ -186,24 +231,43 @@ export async function generateFullBrandKit(
     processedPng,
     customIconPng,
     customWhiteLogoPng,
-    vectorizedSvg,
-    negativeSvg,
+    vectorizedSvg: inputVectorizedSvg,
+    simboloSvg: inputSimboloSvg,
+    negativeSvg: inputNegativeSvg,
+    usarVetorizacaoOpcional = false,
     logoDna,
     sessaoId,
     isDarkMonochrome,
-    dados,
+    dados: rawDados,
     paleta,
     fontPairId,
     kitStyle,
     coverLayoutId,
     styleOverrides,
     photoBuffer,
-    cutoutBuffer,
   } = input;
 
-  if (!dados.nome?.trim()) {
+  if (!rawDados.nome?.trim()) {
     throw new KitGenerationError("invalid_input", "O nome da marca é obrigatório.");
   }
+
+  if (!processedPng || processedPng.length === 0) {
+    throw new KitGenerationError(
+      "invalid_input",
+      "O logótipo escolhido é obrigatório para gerar as peças do kit."
+    );
+  }
+
+  const tomResolved: TomDaMarca =
+    rawDados.tom || logoDna?.tom || "tradicional";
+  const dados: BrandData = { ...rawDados, tom: tomResolved };
+
+  const estiloVisual = resolveEstiloVisualKit({
+    estiloVisual: input.estiloVisual,
+    coverLayoutId,
+    kitStyle,
+    logoDna,
+  });
 
   const effectiveStyles: StyleGroupOverrides = {
     capas: styleOverrides?.capas || kitStyle,
@@ -214,8 +278,6 @@ export async function generateFullBrandKit(
     assinatura: styleOverrides?.assinatura || kitStyle,
   };
 
-  // Validate if any group uses "fotografia" that requires a photo when called from user flow
-  // (Note: if photoBuffer is explicitly required, API route checks it, or if provided we pass it along)
   const zipFileMap = new Map<string, Buffer>();
   const allStorageFiles = new Map<string, Buffer>();
 
@@ -223,6 +285,31 @@ export async function generateFullBrandKit(
     zipFileMap.set(relPath, buf);
     allStorageFiles.set(relPath, buf);
   };
+
+  // Vetorização local estritamente opcional e apenas aplicável a favicon e impressão
+  let optVectorizedSvg = inputVectorizedSvg;
+  let optSimboloSvg = inputSimboloSvg;
+  let optNegativeSvg = inputNegativeSvg;
+
+  if (usarVetorizacaoOpcional && (!optVectorizedSvg || !optSimboloSvg)) {
+    try {
+      const vec = await vetorizarImagemLocal(processedPng, {
+        maxColors: 8,
+        inkHex: paleta.tinta.hex,
+        paletteHints: [
+          paleta.primaria.hex,
+          paleta.secundaria.hex,
+          paleta.tinta.hex,
+          paleta.papel.hex,
+        ],
+      });
+      optVectorizedSvg = optVectorizedSvg || vec.colorSvg;
+      optSimboloSvg = optSimboloSvg || vec.simboloSvg;
+      optNegativeSvg = optNegativeSvg || vec.negativoTransparenteSvg;
+    } catch {
+      // Mantém raster em favicon e impressão se falhar a vetorização opcional
+    }
+  }
 
   // 1. Variantes do logótipo (5 ficheiros)
   const overlayWhiteLogoPng =
@@ -259,120 +346,74 @@ export async function generateFullBrandKit(
   putZipFile("variantes/fundo-claro.png", fundoClaroPng);
   putZipFile("variantes/fundo-escuro.png", fundoEscuroPng);
 
-  // 2. Fotos de perfil e logótipos de redes (9 ficheiros)
-  const profileSpecs: { path: string; size: number; padding: number }[] = [
-    { path: "facebook/foto-de-perfil.png", size: 320, padding: 0.21 },
-    { path: "instagram/foto-de-perfil.png", size: 320, padding: 0.21 },
-    { path: "x/foto-de-perfil.png", size: 400, padding: 0.21 },
-    { path: "youtube/foto-de-perfil.png", size: 800, padding: 0.21 },
-    { path: "linkedin/perfil-pessoal.png", size: 400, padding: 0.21 },
-    { path: "linkedin/perfil-empresa.png", size: 400, padding: 0.16 },
-    { path: "whatsapp-business/foto-de-perfil.png", size: 640, padding: 0.21 },
-    { path: "google-business/logotipo.png", size: 720, padding: 0.16 },
-  ];
+  // 2. Todas as 18 peças de redes sociais e perfis — pipeline só-imagem com referência obrigatória + zonas seguras
+  const textosPedidosPorPeca: Record<string, string[]> = {};
+  const safeZoneAudits: Record<string, SafeZoneAuditResult> = {};
+  const pecasMetadata: Record<string, KitPecaMeta> = {};
 
-  for (const p of profileSpecs) {
-    const buf = await renderSquareOnBackground({
-      logoPng: iconePng,
-      size: p.size,
-      bgHex: paleta.papel.hex,
-      paddingRatio: p.padding,
-      opaque: true,
-    });
-    putZipFile(p.path, buf);
-  }
-
-  // 3. Capas de redes sociais (6 ficheiros)
-  const coverSpecs: { id: string; path: string; width: number; height: number }[] = [
-    { id: "fb-capa", path: "facebook/capa.png", width: 851, height: 315 },
-    { id: "x-cabecalho", path: "x/cabecalho.png", width: 1500, height: 500 },
-    { id: "yt-banner", path: "youtube/banner.png", width: 2560, height: 1440 },
-    { id: "li-capa-pessoal", path: "linkedin/capa-pessoal.png", width: 1584, height: 396 },
-    { id: "li-capa-empresa", path: "linkedin/capa-empresa.png", width: 1512, height: 256 },
-    { id: "gb-capa", path: "google-business/capa.png", width: 1024, height: 576 },
-  ];
-
-  for (const c of coverSpecs) {
-    const buf = await renderCoverPiece({
-      id: c.id,
-      width: c.width,
-      height: c.height,
-      style: effectiveStyles.capas,
+  for (const spec of REDES_SOCIAIS_LIST) {
+    const groupStyle = spec.styleGroup
+      ? effectiveStyles[spec.styleGroup]
+      : effectiveStyles.capas;
+    const peca = await renderRedeSocialPiece({
+      redeId: spec.id,
+      estiloVisual,
       dados,
       paleta,
-      fontPairId,
       processedPng,
-      whiteLogoPng: overlayWhiteLogoPng,
-      isDarkMonochrome,
-      photoBuffer,
-      coverLayoutId,
-      cutoutBuffer,
-      vectorizedSvg,
-      negativeSvg,
       logoDna,
+      style: groupStyle,
       sessaoId,
     });
-    putZipFile(c.path, buf);
+
+    putZipFile(spec.ficheiro, peca.buffer);
+    textosPedidosPorPeca[spec.id] = peca.textosPedidos;
+    safeZoneAudits[spec.id] = peca.audit;
+    pecasMetadata[spec.id] = {
+      redeId: spec.id,
+      ficheiro: spec.ficheiro,
+      estiloVisual: peca.estiloVisual,
+      origem: peca.origem,
+      fixtureNome: peca.fixtureNome,
+      aspectRatioGemini: peca.aspectRatioGemini,
+      referenciaLogoUsada: peca.referenciaLogoUsada,
+      textosPedidos: peca.textosPedidos,
+      avisoTextos: peca.avisoTextos,
+      audit: peca.audit,
+    };
   }
 
-  // 4. Instagram Publicação (1080×1080) e Story (1080×1920) (2 ficheiros)
-  const igPostPng = await renderInstagramPost({
-    style: effectiveStyles.publicacao,
-    dados,
-    paleta,
-    fontPairId,
-    processedPng,
-    whiteLogoPng: overlayWhiteLogoPng,
-    isDarkMonochrome,
-    photoBuffer,
-    vectorizedSvg,
-    negativeSvg,
-    logoDna,
-    sessaoId,
+  // 3. Favicon (6 ficheiros — pode usar vetorização opcional quando ativada)
+  const faviconSourcePng = await resolveOptionalFaviconSourcePng({
+    iconePng,
+    simboloSvg: optSimboloSvg,
+    usarVetorizacaoOpcional,
   });
-  putZipFile("instagram/publicacao-1080.png", igPostPng);
 
-  const igStoryPng = await renderInstagramStory({
-    style: effectiveStyles.story,
-    dados,
-    paleta,
-    fontPairId,
-    processedPng,
-    whiteLogoPng: overlayWhiteLogoPng,
-    isDarkMonochrome,
-    photoBuffer,
-    vectorizedSvg,
-    negativeSvg,
-    logoDna,
-    sessaoId,
-  });
-  putZipFile("instagram/story-1080x1920.png", igStoryPng);
-
-  // 5. Favicon (6 ficheiros)
-  const favIco = await createMultiSizeIco(iconePng, [16, 32, 48]);
+  const favIco = await createMultiSizeIco(faviconSourcePng, [16, 32, 48]);
   const fav32 = await renderSquareOnBackground({
-    logoPng: iconePng,
+    logoPng: faviconSourcePng,
     size: 32,
     bgHex: paleta.papel.hex,
     paddingRatio: 0.08,
     opaque: false,
   });
   const appleTouch = await renderSquareOnBackground({
-    logoPng: iconePng,
+    logoPng: faviconSourcePng,
     size: 180,
     bgHex: paleta.papel.hex,
     paddingRatio: 0.16,
     opaque: true,
   });
   const icon192 = await renderSquareOnBackground({
-    logoPng: iconePng,
+    logoPng: faviconSourcePng,
     size: 192,
     bgHex: paleta.papel.hex,
     paddingRatio: 0.1,
     opaque: false,
   });
   const icon512 = await renderSquareOnBackground({
-    logoPng: iconePng,
+    logoPng: faviconSourcePng,
     size: 512,
     bgHex: paleta.papel.hex,
     paddingRatio: 0.1,
@@ -402,7 +443,7 @@ export async function generateFullBrandKit(
     Buffer.from(JSON.stringify(webmanifestObj, null, 2), "utf8")
   );
 
-  // 6. Email (2 ficheiros)
+  // 4. Email (2 ficheiros)
   const emailLogoPng = await renderSignatureLogo(processedPng);
   const emailHtml = renderEmailSignatureHtml({
     style: effectiveStyles.assinatura,
@@ -413,7 +454,7 @@ export async function generateFullBrandKit(
   putZipFile("email/logotipo-assinatura.png", emailLogoPng);
   putZipFile("email/assinatura.html", Buffer.from(emailHtml, "utf8"));
 
-  // 7. Impressão e Guia de Marca (3 ficheiros PDF)
+  // 5. Impressão e Guia de Marca (3 ficheiros PDF — pode usar vetorização opcional nos de impressão)
   const cartaoRes = await renderBusinessCardPdf({
     style: effectiveStyles.cartao,
     dados,
@@ -423,6 +464,9 @@ export async function generateFullBrandKit(
     whiteLogoPng: overlayWhiteLogoPng,
     isDarkMonochrome,
     photoBuffer,
+    vectorizedSvg: optVectorizedSvg,
+    negativeSvg: optNegativeSvg,
+    usarVetorizacaoOpcional,
   });
   putZipFile("impressao/cartao-de-visita.pdf", cartaoRes.pdfBuffer);
   allStorageFiles.set("_previews/cartao.png", cartaoRes.frontPreviewPng);
@@ -436,6 +480,9 @@ export async function generateFullBrandKit(
     whiteLogoPng: overlayWhiteLogoPng,
     isDarkMonochrome,
     photoBuffer,
+    vectorizedSvg: optVectorizedSvg,
+    negativeSvg: optNegativeSvg,
+    usarVetorizacaoOpcional,
   });
   putZipFile("impressao/papel-de-carta.pdf", papelRes.pdfBuffer);
   allStorageFiles.set("_previews/papel.png", papelRes.previewPng);
@@ -454,7 +501,7 @@ export async function generateFullBrandKit(
   putZipFile("guia-de-marca/guia-de-marca.pdf", guiaRes.pdfBuffer);
   allStorageFiles.set("_previews/guia.png", guiaRes.previewPng);
 
-  // 8. Paleta, Tipografia e LEIA-ME (4 ficheiros)
+  // 6. Paleta, Tipografia e LEIA-ME (4 ficheiros)
   const paletaJson = JSON.stringify(paleta, null, 2);
   const amostraSvg = renderPaletteSampleSvg(paleta, dados.nome);
   const tiposTxt = renderTypographyTxt(fontPairId, dados.nome);
@@ -466,14 +513,14 @@ export async function generateFullBrandKit(
   putZipFile("tipografia/tipos.txt", Buffer.from(tiposTxt, "utf8"));
   putZipFile("LEIA-ME.txt", Buffer.from(leiameTxt, "utf8"));
 
-  // Verify we have all 36 files from FORMAT_SPECS
+  // Verifica exactamente os 38 ficheiros esperados em FORMAT_SPECS
   if (zipFileMap.size !== FORMAT_SPECS.length) {
     throw new Error(
       `Contagem de ficheiros inesperada: gerados ${zipFileMap.size}, esperados ${FORMAT_SPECS.length}`
     );
   }
 
-  // Create ZIP with root folder `pandomarca-{slug}/`
+  // Montar ZIP em pandomarca-{slug}/
   const zip = new JSZip();
   const rootFolder = `pandomarca-${slug}`;
   for (const spec of FORMAT_SPECS) {
@@ -502,13 +549,20 @@ export async function generateFullBrandKit(
     paleta,
     fontPairId,
     kitStyle,
+    tom: tomResolved,
+    estiloVisual,
+    usarVetorizacaoOpcional: Boolean(usarVetorizacaoOpcional),
     coverLayoutId,
     styleOverrides: effectiveStyles,
     coverArtOrigins: {
-      tipo: "nascida-do-logotipo",
-      estiloDirecao: logoDna?.estiloDirecao || effectiveStyles.capas,
+      tipo: "so-imagem-com-referencia",
+      estiloVisual,
+      tom: tomResolved,
       origemLogo: logoDna?.fixtureLogoOrigem || "logotipo-utilizador",
     },
+    textosPedidosPorPeca,
+    safeZoneAudits,
+    pecasMetadata,
     files: Array.from(zipFileMap.keys()),
   };
 
@@ -521,3 +575,128 @@ export async function generateFullBrandKit(
     allStorageFiles,
   };
 }
+
+/**
+ * Regenera uma única peça social do kit já criado (ex.: após clique em «Regenerar» no aviso
+ * «Verifique os textos» ou em alerta de zona segura), atualizando o PNG e reconstruindo o ZIP.
+ */
+export async function regenerarPecaDoKit(params: {
+  kitId: string;
+  redeId: RedeSocialId;
+  estiloVisual?: "moderno" | "classico";
+}): Promise<{ meta: KitMeta; peca: PecaGeradaIA }> {
+  const loaded = loadKitMeta(params.kitId);
+  if (loaded.status === "expired") {
+    throw new KitGenerationError(
+      "invalid_input",
+      "Este kit expirou (validade de 6 horas). Gere novamente o kit."
+    );
+  }
+  if (loaded.status !== "ok") {
+    throw new KitGenerationError("not_found", "Kit não encontrado.");
+  }
+
+  const kitMeta = loaded.meta;
+  const rede = getRedeSocialConfig(params.redeId);
+
+  const loadedDraft =
+    kitMeta.draftId && kitMeta.draftId !== "direct"
+      ? loadDraft(kitMeta.draftId)
+      : { status: "not_found" as const };
+
+  const refLogoPng =
+    loadedDraft.status === "ok"
+      ? loadedDraft.processedPng
+      : loadKitFile(params.kitId, "variantes/logotipo-principal.png");
+
+  if (!refLogoPng || refLogoPng.length === 0) {
+    throw new KitGenerationError(
+      "invalid_input",
+      "Referência do logótipo não disponível para regenerar esta peça."
+    );
+  }
+
+  const estiloVisual =
+    params.estiloVisual || kitMeta.estiloVisual || "moderno";
+
+  const peca = await renderRedeSocialPiece({
+    redeId: params.redeId,
+    estiloVisual,
+    dados: kitMeta.dados,
+    paleta: kitMeta.paleta,
+    processedPng: refLogoPng,
+    logoDna: loadedDraft.status === "ok" ? loadedDraft.meta.logoDna : undefined,
+    style: rede.styleGroup
+      ? kitMeta.styleOverrides[rede.styleGroup]
+      : kitMeta.kitStyle,
+    sessaoId:
+      loadedDraft.status === "ok" ? loadedDraft.meta.sessaoImagemId : undefined,
+    bypassCache: true,
+  });
+
+  // Recriar o ZIP preservando os restantes ficheiros
+  const rootFolder = `pandomarca-${kitMeta.slug}`;
+  const zip = new JSZip();
+  for (const spec of FORMAT_SPECS) {
+    if (spec.ficheiro === rede.ficheiro) {
+      zip.file(`${rootFolder}/${spec.ficheiro}`, peca.buffer);
+    } else {
+      const buf = loadKitFile(params.kitId, spec.ficheiro);
+      if (buf) {
+        zip.file(`${rootFolder}/${spec.ficheiro}`, buf);
+      }
+    }
+  }
+
+  const nextZipBuffer = await zip.generateAsync({
+    type: "nodebuffer",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  });
+
+  const nextTextos = {
+    ...(kitMeta.textosPedidosPorPeca || {}),
+    [params.redeId]: peca.textosPedidos,
+  };
+  const nextAudits = {
+    ...(kitMeta.safeZoneAudits || {}),
+    [params.redeId]: peca.audit,
+  };
+  const nextPecasMeta: Record<string, KitPecaMeta> = {
+    ...(kitMeta.pecasMetadata || {}),
+    [params.redeId]: {
+      redeId: params.redeId,
+      ficheiro: rede.ficheiro,
+      estiloVisual: peca.estiloVisual,
+      origem: peca.origem,
+      fixtureNome: peca.fixtureNome,
+      aspectRatioGemini: peca.aspectRatioGemini,
+      referenciaLogoUsada: peca.referenciaLogoUsada,
+      textosPedidos: peca.textosPedidos,
+      avisoTextos: peca.avisoTextos,
+      audit: peca.audit,
+    },
+  };
+
+  const updatedMeta = updateKitMetaAndFile({
+    kitId: params.kitId,
+    relPath: rede.ficheiro,
+    fileBuffer: peca.buffer,
+    zipBuffer: nextZipBuffer,
+    patch: {
+      textosPedidosPorPeca: nextTextos,
+      safeZoneAudits: nextAudits,
+      pecasMetadata: nextPecasMeta,
+    },
+  });
+
+  if (!updatedMeta) {
+    throw new KitGenerationError(
+      "invalid_input",
+      "Não foi possível guardar a peça regenerada."
+    );
+  }
+
+  return { meta: updatedMeta, peca };
+}
+

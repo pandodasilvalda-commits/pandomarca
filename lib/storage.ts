@@ -4,7 +4,8 @@ import path from "path";
 import crypto from "crypto";
 import { BrandData, BrandPalette, FontPairId, StyleGroupOverrides, StyleId } from "./formats";
 import type { CoverLayoutId } from "./capas/catalog";
-import type { LogoVisualDna } from "./imagem/types";
+import type { SafeZoneAuditResult } from "./capas/safe-zone";
+import type { LogoVisualDna, TomDaMarca } from "./imagem/types";
 
 const BASE_TMP_DIR = path.join(/*turbopackIgnore: true*/ os.tmpdir(), "pandomarca");
 const DRAFTS_DIR = path.join(/*turbopackIgnore: true*/ BASE_TMP_DIR, "rascunhos");
@@ -34,6 +35,9 @@ export interface DraftMeta {
   qualityWarning?: string;
   isDarkMonochrome: boolean;
   paletaExtraida: BrandPalette;
+  tom?: TomDaMarca;
+  estiloVisualEscolhido?: "moderno" | "classico";
+  usarVetorizacaoOpcional?: boolean;
   svgSource?: string;
   vectorizedSvg?: string;
   simboloSvg?: string;
@@ -53,6 +57,19 @@ export interface DraftMeta {
   };
 }
 
+export interface KitPecaMeta {
+  redeId: string;
+  ficheiro: string;
+  estiloVisual: "moderno" | "classico";
+  origem: string;
+  fixtureNome?: string;
+  aspectRatioGemini: string;
+  referenciaLogoUsada: boolean;
+  textosPedidos: string[];
+  avisoTextos: string;
+  audit: SafeZoneAuditResult;
+}
+
 export interface KitMeta {
   id: string;
   draftId: string;
@@ -64,9 +81,15 @@ export interface KitMeta {
   paleta: BrandPalette;
   fontPairId: FontPairId;
   kitStyle: StyleId;
+  tom?: TomDaMarca;
+  estiloVisual: "moderno" | "classico";
+  usarVetorizacaoOpcional?: boolean;
   coverLayoutId?: CoverLayoutId;
   styleOverrides: StyleGroupOverrides;
   coverArtOrigins?: Record<string, string>;
+  textosPedidosPorPeca?: Record<string, string[]>;
+  safeZoneAudits?: Record<string, SafeZoneAuditResult>;
+  pecasMetadata?: Record<string, KitPecaMeta>;
   files: string[];
 }
 
@@ -230,3 +253,41 @@ export function loadKitZip(kitId: string): { filename: string; buffer: Buffer } 
     buffer: fs.readFileSync(zipPath),
   };
 }
+
+export function updateKitMetaAndFile(params: {
+  kitId: string;
+  relPath: string;
+  fileBuffer: Buffer;
+  zipBuffer: Buffer;
+  patch: Partial<KitMeta>;
+}): KitMeta | null {
+  const loaded = loadKitMeta(params.kitId);
+  if (loaded.status !== "ok") return null;
+
+  const normalizedRel = path.posix
+    .normalize(params.relPath)
+    .replace(/^(\.\.(\/|\\|$))+/, "")
+    .replace(/^\/+/, "");
+  const filesRoot = path.join(/*turbopackIgnore: true*/ loaded.dir, "files");
+  const fullPath = path.join(/*turbopackIgnore: true*/ filesRoot, normalizedRel);
+  if (!fullPath.startsWith(filesRoot)) return null;
+
+  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+  fs.writeFileSync(fullPath, params.fileBuffer);
+  fs.writeFileSync(
+    path.join(/*turbopackIgnore: true*/ loaded.dir, loaded.meta.zipFilename),
+    params.zipBuffer
+  );
+
+  const nextMeta: KitMeta = {
+    ...loaded.meta,
+    ...params.patch,
+  };
+  fs.writeFileSync(
+    path.join(/*turbopackIgnore: true*/ loaded.dir, "meta.json"),
+    JSON.stringify(nextMeta, null, 2),
+    "utf8"
+  );
+  return nextMeta;
+}
+

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_COOKIE_NAME, verifyEntitlementCookie } from "@/lib/access";
 import { analyzeAndStoreLogo, LogoAnalysisError } from "@/lib/analyze-logo";
+import {
+  TOM_DA_MARCA_SPECS,
+  type TomDaMarca,
+} from "@/lib/config/redes-sociais";
 import { SECTORS, SectorId } from "@/lib/formats";
 import { buildLogoVisualDna } from "@/lib/imagem";
 import { generateFourProposals } from "@/lib/palette";
@@ -27,6 +31,7 @@ export async function POST(req: NextRequest) {
     let filename = "logotipo.png";
     let mimeType = "image/png";
     let sector: SectorId = "restauracao";
+    let tom: TomDaMarca | undefined;
     let brandName = "";
     let tresPalavras = "";
     let presetUsed: "forno-da-vilarica" | "oficina-do-sao" | null = null;
@@ -36,6 +41,10 @@ export async function POST(req: NextRequest) {
       const sectorField = (formData.get("sector") as string) || "restauracao";
       if (sectorField in SECTORS) {
         sector = sectorField as SectorId;
+      }
+      const tomField = String(formData.get("tom") || "").trim();
+      if (tomField in TOM_DA_MARCA_SPECS) {
+        tom = tomField as TomDaMarca;
       }
       brandName = String(formData.get("nome") || "").trim();
       tresPalavras = String(formData.get("tresPalavras") || "").trim();
@@ -50,6 +59,7 @@ export async function POST(req: NextRequest) {
         brandName = sample.dados.nome;
         tresPalavras = sample.questionarioA.tresPalavras;
         presetUsed = presetId;
+        if (!tom) tom = presetId === "oficina-do-sao" ? "tecnico" : "tradicional";
       } else {
         const file = formData.get("ficheiro");
         if (!file || !(file instanceof File) || file.size === 0) {
@@ -72,6 +82,9 @@ export async function POST(req: NextRequest) {
       if (body.sector && body.sector in SECTORS) {
         sector = body.sector as SectorId;
       }
+      if (typeof body.tom === "string" && body.tom in TOM_DA_MARCA_SPECS) {
+        tom = body.tom as TomDaMarca;
+      }
       if (typeof body.nome === "string") brandName = body.nome.trim();
       if (typeof body.tresPalavras === "string") tresPalavras = body.tresPalavras.trim();
       if (
@@ -86,6 +99,7 @@ export async function POST(req: NextRequest) {
         brandName = sample.dados.nome;
         tresPalavras = sample.questionarioA.tresPalavras;
         presetUsed = body.presetId;
+        if (!tom) tom = body.presetId === "oficina-do-sao" ? "tecnico" : "tradicional";
       } else if (typeof body.svgText === "string" && body.svgText.trim()) {
         fileBuffer = Buffer.from(body.svgText, "utf8");
         filename = "logotipo.svg";
@@ -104,6 +118,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const tomFinal: TomDaMarca = tom || "tradicional";
+
     const { meta } = await analyzeAndStoreLogo({
       buffer: fileBuffer,
       filename,
@@ -114,6 +130,7 @@ export async function POST(req: NextRequest) {
     const logoDna = buildLogoVisualDna({
       nome: brandName || filename.replace(/\.[^.]+$/, ""),
       sector,
+      tom: tomFinal,
       paleta: meta.paletaExtraida,
       estiloDirecao: presetUsed === "oficina-do-sao" ? "moderno" : undefined,
       fixtureLogoOrigem: presetUsed ? `preset-${presetUsed}` : undefined,
@@ -121,7 +138,12 @@ export async function POST(req: NextRequest) {
       aspectRatio: meta.width / Math.max(1, meta.height),
       isDarkMonochrome: meta.isDarkMonochrome,
     });
-    const updatedMeta = updateDraftMeta(meta.id, { logoDna }) || { ...meta, logoDna };
+    const updatedMeta =
+      updateDraftMeta(meta.id, { logoDna, tom: tomFinal }) || {
+        ...meta,
+        logoDna,
+        tom: tomFinal,
+      };
 
     const propostas = generateFourProposals(updatedMeta.paletaExtraida, sector);
 

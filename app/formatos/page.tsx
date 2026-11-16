@@ -15,14 +15,14 @@ const CATEGORY_LABELS: Record<FormatCategory, { titulo: string; descricao: strin
       "Versões base com transparência e fundos controlados para utilização transversal.",
   },
   redes: {
-    titulo: "2. Redes Sociais e Perfis (16 ficheiros PNG)",
+    titulo: "2. Redes Sociais e Perfis (18 ficheiros PNG)",
     descricao:
-      "Fotos de perfil, capas, publicação quadrada e story vertical nas medidas recomendadas pelas plataformas.",
+      "Fotos de perfil geradas do emblema (testadas em círculo a 40 px), capas, publicação 4:5 (1080×1350), publicação 1:1 (1080×1080) e story vertical com zonas seguras verificadas em computador e telemóvel.",
   },
   favicon: {
     titulo: "3. Favicon e Ícones de Website (6 ficheiros)",
     descricao:
-      "Ícone multi-resolução .ico (16, 32 e 48 px), separadores retina, iOS/Safari e manifesto PWA.",
+      "Ícone multi-resolução .ico (16, 32 e 48 px), separadores retina, iOS/Safari e manifesto PWA (com vetorização local opcional).",
   },
   email: {
     titulo: "4. Assinatura de Email (2 ficheiros)",
@@ -32,7 +32,7 @@ const CATEGORY_LABELS: Record<FormatCategory, { titulo: string; descricao: strin
   impressao: {
     titulo: "5. Estacionário para Impressão (2 ficheiros PDF)",
     descricao:
-      "Cartão de visita europeu (91×61 mm com corte 85×55 mm e sangria de 3 mm em duas páginas) e papel de carta A4.",
+      "Cartão de visita europeu (91×61 mm com corte 85×55 mm e sangria de 3 mm em duas páginas) e papel de carta A4 (com vetorização local opcional).",
   },
   guia: {
     titulo: "6. Guia de Marca (1 ficheiro PDF)",
@@ -67,10 +67,14 @@ export default function FormatosPage() {
             <span>Data de referência das medidas: {REFERENCE_DATE_PT}</span>
           </div>
           <h1 className="text-3xl font-bold tracking-tight text-stone-950 sm:text-4xl">
-            Catálogo Oficial dos 36 Formatos do Kit
+            Catálogo Oficial dos 38 Formatos do Kit
           </h1>
           <p className="text-base text-stone-600 leading-relaxed">
-            Todos os ficheiros gerados pelo PandoMarca seguem medidas determinísticas verificadas por testes automáticos. Cada formato de plataforma externa indica a respetiva documentação oficial.
+            Todos os ficheiros gerados pelo PandoMarca seguem medidas centralizadas em{" "}
+            <code className="rounded bg-stone-100 px-1.5 py-0.5 text-xs font-semibold text-stone-800">
+              lib/config/redes-sociais.ts
+            </code>{" "}
+            e verificadas por testes automáticos. Cada formato de plataforma externa indica a respetiva documentação oficial.
           </p>
         </div>
 
@@ -79,7 +83,7 @@ export default function FormatosPage() {
           id="formatos-cta-criar"
           className="inline-flex items-center gap-2 self-start rounded-xl bg-stone-900 px-5 py-3 text-sm font-semibold text-stone-50 shadow-xs transition hover:bg-stone-800 lg:self-auto"
         >
-          <span>Criar kit com estes 36 formatos</span>
+          <span>Criar kit com estes 38 formatos</span>
           <ArrowRight className="h-4 w-4" />
         </Link>
       </div>
@@ -160,11 +164,11 @@ export default function FormatosPage() {
           <div className="flex items-center gap-2.5">
             <Palette className="h-5 w-5 text-amber-800" />
             <h2 className="text-xl font-bold text-stone-900">
-              Seis Estilos de Conteúdo
+              Propostas Visuais e Estilos de Estacionário
             </h2>
           </div>
           <p className="text-sm text-stone-600">
-            Aplicados a capas, publicação (1080×1080), story (1080×1920), cartão de visita, papel de carta e assinatura de email. O conteúdo (logótipo e texto) fica sempre numa camada acima do fundo.
+            Nas 18 peças sociais (capas, publicações 4:5 a 1080×1350 e 1:1 a 1080×1080, story 9:16 a 1080×1920 e perfis), o PandoMarca gera sempre 2 propostas por geração de imagem (Moderna em camadas e Clássica) com o logótipo aprovado como referência obrigatória. No cartão de visita, papel de carta A4 e assinatura de email aplica-se o estilo escolhido abaixo.
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             {Object.values(CONTENT_STYLES).map((st) => (

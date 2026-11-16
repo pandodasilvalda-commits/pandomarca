@@ -86,7 +86,7 @@ export function SiteFooter() {
             >
               PandoWeb (pandoweb.pt)
             </a>
-            . Entrega 36 ficheiros prontos a usar em redes sociais, favicon, assinatura de email, estacionário e guia de marca.
+            . Entrega 38 ficheiros prontos a usar em redes sociais, favicon, assinatura de email, estacionário e guia de marca.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-4 text-xs font-medium text-stone-600">
@@ -95,7 +95,7 @@ export function SiteFooter() {
           </Link>
           <span>•</span>
           <Link href="/formatos" className="hover:text-stone-900">
-            36 Formatos Oficiais
+            38 Formatos Oficiais
           </Link>
           <span>•</span>
           <Link href="/criar" className="hover:text-stone-900">
