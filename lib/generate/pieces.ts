@@ -85,8 +85,8 @@ export async function createWhiteKnockoutLogo(
       const pxIndex = i / 4;
       const x = pxIndex % w;
       const hsl = rgbToHsl({ r, g, b });
-      // Mantém todas as cores do símbolo intactas; no texto escuro, passa a branco quente para legibilidade em fundo escuro
-      if (x >= wordmarkStartX && hsl.l < 22) {
+      // Mantém as cores vivas intactas; texto neutro escuro passa a branco quente para legibilidade sobre escuro
+      if (x >= wordmarkStartX && (hsl.l < 24 || (hsl.l < 38 && hsl.s < 48))) {
         out[i] = 250;
         out[i + 1] = 248;
         out[i + 2] = 245;
@@ -105,6 +105,39 @@ export async function createWhiteKnockoutLogo(
   })
     .png()
     .toBuffer();
+}
+
+async function trimLogoWithRatio(pngBuffer: Buffer): Promise<{
+  buffer: Buffer;
+  width: number;
+  height: number;
+  aspectRatio: number;
+}> {
+  try {
+    const trimmed = await sharp(pngBuffer)
+      .ensureAlpha()
+      .trim({ threshold: 4 })
+      .png()
+      .toBuffer({ resolveWithObject: true });
+    const w = Math.max(1, trimmed.info.width);
+    const h = Math.max(1, trimmed.info.height);
+    return {
+      buffer: trimmed.data,
+      width: w,
+      height: h,
+      aspectRatio: w / h,
+    };
+  } catch {
+    const meta = await sharp(pngBuffer).metadata();
+    const w = Math.max(1, meta.width || 300);
+    const h = Math.max(1, meta.height || 150);
+    return {
+      buffer: pngBuffer,
+      width: w,
+      height: h,
+      aspectRatio: w / h,
+    };
+  }
 }
 
 export async function createMonochromeLogo(
@@ -375,6 +408,7 @@ export interface StyleThemeColors {
   accentColor: string;
   badgeBg: string;
   badgeText: string;
+  bgRefHex?: string;
 }
 
 export function getStyleThemeColors(
@@ -396,6 +430,7 @@ export function getStyleThemeColors(
         accentColor: paleta.secundaria.hex,
         badgeBg: isDarkBg ? "rgba(255,255,255,0.16)" : "rgba(0,0,0,0.08)",
         badgeText: textColor,
+        bgRefHex: paleta.primaria.hex,
       };
     }
     case "degrade": {
@@ -406,6 +441,7 @@ export function getStyleThemeColors(
         accentColor: paleta.secundaria.hex,
         badgeBg: "rgba(255,255,255,0.16)",
         badgeText: paleta.papel.hex,
+        bgRefHex: mixHex(paleta.tinta.hex, paleta.primaria.hex, 0.45),
       };
     }
     case "fotografia": {
@@ -416,6 +452,7 @@ export function getStyleThemeColors(
         accentColor: paleta.primaria.hex,
         badgeBg: "rgba(255,255,255,0.18)",
         badgeText: "#FAF8F5",
+        bgRefHex: "#141210",
       };
     }
     case "padrao":
@@ -429,6 +466,7 @@ export function getStyleThemeColors(
         accentColor: paleta.primaria.hex,
         badgeBg: mixHex(paleta.papel.hex, paleta.primaria.hex, 0.14),
         badgeText: paleta.tinta.hex,
+        bgRefHex: paleta.papel.hex,
       };
     }
   }
@@ -482,14 +520,15 @@ export async function renderStyleBackgroundBuffer(params: {
   }
 
   if (style === "degrade") {
-    const deepEnd = mixHex(paleta.tinta.hex, paleta.secundaria.hex, 0.42);
-    const midStop = mixHex(paleta.primaria.hex, paleta.tinta.hex, 0.28);
+    const deepStart = mixHex(paleta.tinta.hex, paleta.primaria.hex, 0.26);
+    const midStop = mixHex(paleta.tinta.hex, paleta.primaria.hex, 0.46);
+    const endStop = mixHex(paleta.tinta.hex, paleta.primaria.hex, 0.68);
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
       <defs>
         <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="${paleta.primaria.hex}" />
+          <stop offset="0%" stop-color="${deepStart}" />
           <stop offset="52%" stop-color="${midStop}" />
-          <stop offset="100%" stop-color="${deepEnd}" />
+          <stop offset="100%" stop-color="${endStop}" />
         </linearGradient>
       </defs>
       <rect width="${width}" height="${height}" fill="url(#bgGrad)" />
@@ -543,66 +582,116 @@ export async function renderStyleBackgroundBuffer(params: {
   return sharp(Buffer.from(svg)).resize(width, height).png().toBuffer();
 }
 
-function getLogoDataUrlForTheme(
-  isDarkBg: boolean,
-  processedPng: Buffer,
-  darkReadyLogoPng: Buffer
-): string {
-  const chosen = isDarkBg ? darkReadyLogoPng : processedPng;
-  return `data:image/png;base64,${chosen.toString("base64")}`;
+function relLuminanceRgb(r: number, g: number, b: number): number {
+  const lin = (c: number) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 }
 
-function renderThemedLogoElement(params: {
-  isDarkBg: boolean;
-  isDarkMonochrome: boolean;
-  processedPng: Buffer;
-  whiteLogoPng: Buffer;
-  paleta: BrandPalette;
-  width: number;
-  height: number;
-}) {
-  const {
-    isDarkBg,
-    isDarkMonochrome,
-    processedPng,
-    whiteLogoPng,
-    paleta,
-    width,
-    height,
-  } = params;
+async function ensureWordmarkContrastOnDarkBg(
+  pngBuffer: Buffer,
+  bgHex: string
+): Promise<Buffer> {
+  const { data, info } = await sharp(pngBuffer)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
 
-  if (isDarkBg && !isDarkMonochrome) {
-    const src = `data:image/png;base64,${processedPng.toString("base64")}`;
-    const padX = Math.max(10, Math.round(height * 0.14));
-    const padY = Math.max(8, Math.round(height * 0.1));
-    return h(
-      "div",
-      {
-        style: {
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: paleta.papel.hex,
-          padding: `${padY}px ${padX}px`,
-          borderRadius: `${Math.max(10, Math.round(height * 0.12))}px`,
-        },
-      },
-      h("img", {
-        src,
-        width: Math.max(36, width - padX * 2),
-        height: Math.max(28, height - padY * 2),
-        style: { objectFit: "contain" },
-      })
-    );
+  const w = info.width;
+  const hPx = info.height;
+  if (w <= hPx * 1.35) return pngBuffer;
+
+  let wordmarkStartX = -1;
+  const minSearchX = Math.round(w * 0.18);
+  const maxSearchX = Math.min(w - 6, Math.round(w * 0.65));
+  let seenOpaqueLeft = false;
+  for (let x = minSearchX; x <= maxSearchX; x++) {
+    let colOpaque = 0;
+    for (let y = 0; y < hPx; y++) {
+      if (data[(y * w + x) * 4 + 3] > 20) colOpaque++;
+    }
+    if (colOpaque > 0) {
+      seenOpaqueLeft = true;
+    } else if (seenOpaqueLeft && colOpaque === 0) {
+      wordmarkStartX = x;
+      break;
+    }
+  }
+  if (wordmarkStartX <= 0) return pngBuffer;
+
+  const bgRgb = hexToRgb(bgHex);
+  const bgLum = relLuminanceRgb(bgRgb.r, bgRgb.g, bgRgb.b);
+  const out = new Uint8Array(data);
+  let changed = false;
+
+  for (let y = 0; y < hPx; y++) {
+    for (let x = wordmarkStartX; x < w; x++) {
+      const idx = (y * w + x) * 4;
+      const a = out[idx + 3];
+      if (a < 10) continue;
+      const r = out[idx];
+      const g = out[idx + 1];
+      const b = out[idx + 2];
+      const lum = relLuminanceRgb(r, g, b);
+      const contrast = (Math.max(lum, bgLum) + 0.05) / (Math.min(lum, bgLum) + 0.05);
+      const hsl = rgbToHsl({ r, g, b });
+      if (contrast < 4.5 || hsl.l < 58) {
+        out[idx] = 250;
+        out[idx + 1] = 248;
+        out[idx + 2] = 245;
+        changed = true;
+      }
+    }
   }
 
-  const src = getLogoDataUrlForTheme(isDarkBg, processedPng, whiteLogoPng);
-  return h("img", {
-    src,
-    width,
-    height,
-    style: { objectFit: "contain" },
-  });
+  if (!changed) return pngBuffer;
+  return sharp(Buffer.from(out.buffer), {
+    raw: { width: w, height: hPx, channels: 4 },
+  })
+    .png()
+    .toBuffer();
+}
+
+async function prepareFittedLogoElement(params: {
+  isDarkBg: boolean;
+  processedPng: Buffer;
+  whiteLogoPng: Buffer;
+  contrastBgHex?: string;
+  targetHeight: number;
+  maxWidth: number;
+  maxHeight: number;
+}): Promise<{
+  width: number;
+  height: number;
+  aspectRatio: number;
+  element: React.ReactElement;
+}> {
+  const chosenRaw = params.isDarkBg ? params.whiteLogoPng : params.processedPng;
+  const trimmed = await trimLogoWithRatio(chosenRaw);
+  const finalBuffer =
+    params.isDarkBg && params.contrastBgHex
+      ? await ensureWordmarkContrastOnDarkBg(trimmed.buffer, params.contrastBgHex)
+      : trimmed.buffer;
+  let drawH = Math.min(params.maxHeight, Math.max(24, params.targetHeight));
+  let drawW = Math.round(drawH * trimmed.aspectRatio);
+  if (drawW > params.maxWidth) {
+    drawW = params.maxWidth;
+    drawH = Math.max(18, Math.round(drawW / trimmed.aspectRatio));
+  }
+  const src = `data:image/png;base64,${finalBuffer.toString("base64")}`;
+  return {
+    width: drawW,
+    height: drawH,
+    aspectRatio: trimmed.aspectRatio,
+    element: h("img", {
+      src,
+      width: drawW,
+      height: drawH,
+      style: { objectFit: "contain" },
+    }),
+  };
 }
 
 export async function renderCoverPiece(params: {
@@ -628,7 +717,6 @@ export async function renderCoverPiece(params: {
     fontPairId,
     processedPng,
     whiteLogoPng,
-    isDarkMonochrome,
     photoBuffer,
   } = params;
 
@@ -650,178 +738,446 @@ export async function renderCoverPiece(params: {
     id === "li-capa-pessoal" ||
     id === "li-capa-empresa";
 
-  const scale = isYoutubeBanner ? 0.95 : Math.min(width / 1200, height / 360);
-  const titleSize = Math.max(22, Math.min(68, Math.round(42 * scale)));
-  const sloganSize = Math.max(14, Math.min(32, Math.round(20 * scale)));
-  const metaSize = Math.max(12, Math.min(22, Math.round(15 * scale)));
-  const logoH = Math.max(46, Math.min(170, Math.round(height * (isYoutubeBanner ? 0.14 : 0.38))));
-  const logoW = Math.round(logoH * 1.55);
+  const safeW = isYoutubeBanner ? 1544 : width;
+  const safeH = isYoutubeBanner ? 423 : height;
 
-  const leftPad = hasBottomLeftAvatar
-    ? Math.round(width * 0.25)
-    : Math.round(width * 0.07);
-  const rightPad = Math.round(width * 0.06);
+  const leftPad = isYoutubeBanner
+    ? 56
+    : hasBottomLeftAvatar
+    ? Math.round(width * 0.21)
+    : Math.round(width * 0.06);
+  const rightPad = isYoutubeBanner ? 56 : Math.round(width * 0.055);
+  const topPad = isYoutubeBanner ? 24 : Math.round(safeH * 0.08);
+  const botPad = isYoutubeBanner
+    ? 24
+    : Math.round(safeH * (style === "padrao" || style === "informativo" || style === "liso" ? 0.11 : 0.08));
 
-  const contactItems = [dados.website, dados.telefone, dados.morada]
-    .map((s) => (s || "").trim())
-    .filter(Boolean)
-    .slice(0, 2)
-    .join("  •  ");
+  const usableW = Math.max(240, safeW - leftPad - rightPad);
+  const usableH = Math.max(120, safeH - topPad - botPad);
 
-  const contentBoxStyle: Record<string, string | number> = isYoutubeBanner
-    ? {
-        width: "1544px",
-        height: "423px",
-        boxSizing: "border-box",
-        display: "flex",
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "32px 56px",
-      }
-    : {
-        width: "100%",
-        height: "100%",
-        boxSizing: "border-box",
-        display: "flex",
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        paddingLeft: `${leftPad}px`,
-        paddingRight: `${rightPad}px`,
-        paddingTop: `${Math.round(height * 0.1)}px`,
-        paddingBottom: `${Math.round(height * 0.12)}px`,
-      };
+  const scale = isYoutubeBanner ? 0.96 : Math.min(safeW / 1000, safeH / 320);
+  const titleSize = Math.max(24, Math.min(72, Math.round(44 * scale)));
+  const sloganSize = Math.max(15, Math.min(34, Math.round(21 * scale)));
+  const metaSize = Math.max(13, Math.min(22, Math.round(15 * scale)));
 
-  const innerContent = h(
-    "div",
-    { style: contentBoxStyle },
-    h(
+  const logoHasName = !dados.simbolo;
+  const srvText = (dados.servicos || "").trim() || SECTORS[dados.sector]?.rotulo || "";
+  const telText = (dados.telefone || "").trim();
+  const webText = (dados.website || "").trim().replace(/^https?:\/\//, "");
+  const addrText = (dados.morada || "").trim();
+  const hasInfoText = Boolean(srvText || telText || webText || addrText);
+
+  let innerContent: React.ReactElement;
+
+  if (style === "minimal") {
+    // Minimal tipográfico: foca exclusivamente na tipografia com muito espaço negativo
+    innerContent = h(
       "div",
       {
         style: {
+          width: isYoutubeBanner ? "1544px" : "100%",
+          height: isYoutubeBanner ? "423px" : "100%",
+          boxSizing: "border-box",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: `${topPad}px ${Math.round(safeW * 0.08)}px ${botPad}px ${hasBottomLeftAvatar ? leftPad : Math.round(safeW * 0.08)}px`,
+        },
+      },
+      h(
+        "div",
+        {
+          style: {
+            fontFamily: pair.tituloFamily,
+            fontWeight: pair.tituloWeight,
+            fontSize: `${Math.round(titleSize * 1.18)}px`,
+            color: theme.textColor,
+            lineHeight: 1.06,
+            textAlign: "center",
+          },
+        },
+        dados.nome
+      ),
+      dados.slogan
+        ? h(
+            "div",
+            {
+              style: {
+                fontFamily: pair.textoFamily,
+                fontWeight: 400,
+                fontSize: `${sloganSize}px`,
+                color: theme.mutedTextColor,
+                marginTop: "10px",
+                textAlign: "center",
+              },
+            },
+            dados.slogan
+          )
+        : null
+    );
+  } else if (logoHasName) {
+    // O logótipo já contém o nome: nunca duplicar dados.nome nem envolver em caixas brancas.
+    // Garantir >= 38%–48% da altura da capa (e ~52% da zona segura no banner YouTube).
+    if (style === "informativo" && hasInfoText) {
+      // Primeiro tentamos medir o logótipo a 40% da altura da capa para ver se os contactos cabem ao lado
+      const minCoverH = Math.ceil(safeH * 0.38);
+      const probeSideLogo = await prepareFittedLogoElement({
+        isDarkBg: theme.isDarkBg,
+        processedPng,
+        whiteLogoPng,
+        targetHeight: Math.round(safeH * 0.43),
+        maxWidth: usableW,
+        maxHeight: usableH,
+      });
+
+      const canPlaceSideBySide = usableW - probeSideLogo.width >= 310;
+
+      if (canPlaceSideBySide) {
+        const fittedLogo = await prepareFittedLogoElement({
+          isDarkBg: theme.isDarkBg,
+          processedPng,
+          whiteLogoPng,
+          targetHeight: Math.max(minCoverH, Math.round(safeH * 0.44)),
+          maxWidth: Math.max(220, usableW - 310),
+          maxHeight: usableH,
+        });
+
+        innerContent = h(
+          "div",
+          {
+            style: {
+              width: isYoutubeBanner ? "1544px" : "100%",
+              height: isYoutubeBanner ? "423px" : "100%",
+              boxSizing: "border-box",
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              paddingLeft: `${leftPad}px`,
+              paddingRight: `${rightPad}px`,
+              paddingTop: `${topPad}px`,
+              paddingBottom: `${botPad}px`,
+              gap: "28px",
+            },
+          },
+          fittedLogo.element,
+          h(
+            "div",
+            {
+              style: {
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-end",
+                justifyContent: "center",
+                gap: "10px",
+                maxWidth: "36%",
+              },
+            },
+            srvText
+              ? h(
+                  "div",
+                  {
+                    style: {
+                      fontFamily: pair.tituloFamily,
+                      fontWeight: pair.tituloWeight,
+                      fontSize: `${metaSize}px`,
+                      color: theme.textColor,
+                      backgroundColor: theme.badgeBg,
+                      padding: "7px 14px",
+                      borderRadius: "8px",
+                      textAlign: "right",
+                    },
+                  },
+                  srvText
+                )
+              : null,
+            telText || webText
+              ? h(
+                  "div",
+                  {
+                    style: {
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "flex-end",
+                      fontFamily: pair.textoFamily,
+                      fontWeight: 400,
+                      fontSize: `${Math.max(12, metaSize - 1)}px`,
+                      color: theme.mutedTextColor,
+                      lineHeight: 1.35,
+                    },
+                  },
+                  telText ? h("div", { style: { fontWeight: 600, color: theme.textColor } }, telText) : null,
+                  webText ? h("div", null, webText) : null
+                )
+              : null
+          )
+        );
+      } else {
+        // Capas mais estreitas (ex. Facebook 851x315): logótipo grande (>=38% altura) em cima + faixa de serviços/contactos abaixo
+        const infoStripH = Math.max(40, Math.round(safeH * 0.16));
+        const maxStackedLogoH = Math.max(minCoverH, usableH - infoStripH - 14);
+        const fittedLogo = await prepareFittedLogoElement({
+          isDarkBg: theme.isDarkBg,
+          processedPng,
+          whiteLogoPng,
+          targetHeight: Math.min(maxStackedLogoH, Math.round(safeH * 0.42)),
+          maxWidth: usableW,
+          maxHeight: maxStackedLogoH,
+        });
+
+        innerContent = h(
+          "div",
+          {
+            style: {
+              width: isYoutubeBanner ? "1544px" : "100%",
+              height: isYoutubeBanner ? "423px" : "100%",
+              boxSizing: "border-box",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              paddingLeft: `${leftPad}px`,
+              paddingRight: `${rightPad}px`,
+              paddingTop: `${topPad + 6}px`,
+              paddingBottom: `${botPad + 4}px`,
+            },
+          },
+          fittedLogo.element,
+          h(
+            "div",
+            {
+              style: {
+                width: "100%",
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+                marginTop: "10px",
+              },
+            },
+            srvText
+              ? h(
+                  "div",
+                  {
+                    style: {
+                      fontFamily: pair.tituloFamily,
+                      fontWeight: 400,
+                      fontSize: `${Math.max(12, metaSize - 1)}px`,
+                      color: theme.textColor,
+                      backgroundColor: theme.badgeBg,
+                      padding: "6px 14px",
+                      borderRadius: "7px",
+                    },
+                  },
+                  srvText
+                )
+              : h("div", { style: { display: "flex" } }),
+            telText || webText
+              ? h(
+                  "div",
+                  {
+                    style: {
+                      display: "flex",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: "12px",
+                      fontFamily: pair.textoFamily,
+                      fontSize: `${Math.max(12, metaSize - 1)}px`,
+                      color: theme.textColor,
+                      backgroundColor: theme.badgeBg,
+                      padding: "6px 14px",
+                      borderRadius: "7px",
+                    },
+                  },
+                  telText ? h("span", { style: { fontWeight: 700 } }, telText) : null,
+                  telText && webText ? h("span", { style: { color: theme.mutedTextColor } }, "•") : null,
+                  webText ? h("span", { style: { color: theme.mutedTextColor } }, webText) : null
+                )
+              : null
+          )
+        );
+      }
+    } else {
+      // Degradê, Padrão, Liso, Fotografia (com nome no logótipo): destaque total ao logótipo nítido >=44% altura!
+      const fittedLogo = await prepareFittedLogoElement({
+        isDarkBg: theme.isDarkBg,
+        processedPng,
+        whiteLogoPng,
+        contrastBgHex: theme.bgRefHex,
+        targetHeight: Math.round(safeH * (isYoutubeBanner ? 0.56 : 0.48)),
+        maxWidth: usableW,
+        maxHeight: Math.round(usableH * 0.86),
+      });
+
+      innerContent = h(
+        "div",
+        {
+          style: {
+            width: isYoutubeBanner ? "1544px" : "100%",
+            height: isYoutubeBanner ? "423px" : "100%",
+            boxSizing: "border-box",
+            display: "flex",
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            paddingLeft: `${leftPad}px`,
+            paddingRight: `${rightPad}px`,
+            paddingTop: `${topPad}px`,
+            paddingBottom: `${botPad}px`,
+          },
+        },
+        fittedLogo.element
+      );
+    }
+  } else {
+    // O logótipo é APENAS UM SÍMBOLO (dados.simbolo === true): compõe o símbolo grande (>=44% altura) + nome da marca ao lado
+    const fittedSymbol = await prepareFittedLogoElement({
+      isDarkBg: theme.isDarkBg,
+      processedPng,
+      whiteLogoPng,
+      contrastBgHex: theme.bgRefHex,
+      targetHeight: Math.round(safeH * (isYoutubeBanner ? 0.54 : 0.48)),
+      maxWidth: Math.round(usableW * 0.34),
+      maxHeight: Math.round(usableH * 0.84),
+    });
+
+    innerContent = h(
+      "div",
+      {
+        style: {
+          width: isYoutubeBanner ? "1544px" : "100%",
+          height: isYoutubeBanner ? "423px" : "100%",
+          boxSizing: "border-box",
           display: "flex",
           flexDirection: "row",
           alignItems: "center",
-          gap: `${Math.max(16, Math.round(24 * scale))}px`,
-          maxWidth: style === "informativo" ? "65%" : "92%",
+          justifyContent: "space-between",
+          paddingLeft: `${leftPad}px`,
+          paddingRight: `${rightPad}px`,
+          paddingTop: `${topPad}px`,
+          paddingBottom: `${botPad}px`,
+          gap: `${Math.max(18, Math.round(28 * scale))}px`,
         },
       },
-      style !== "minimal"
-        ? renderThemedLogoElement({
-            isDarkBg: theme.isDarkBg,
-            isDarkMonochrome,
-            processedPng,
-            whiteLogoPng,
-            paleta,
-            width: logoW,
-            height: logoH,
-          })
-        : null,
       h(
         "div",
         {
           style: {
             display: "flex",
-            flexDirection: "column",
-            justifyContent: "center",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: `${Math.max(18, Math.round(28 * scale))}px`,
+            maxWidth: style === "informativo" ? "66%" : "96%",
           },
         },
+        fittedSymbol.element,
         h(
-          "div",
-          {
-            style: {
-              fontFamily: pair.tituloFamily,
-              fontWeight: pair.tituloWeight,
-              fontSize: `${titleSize}px`,
-              color: theme.textColor,
-              lineHeight: 1.08,
-            },
-          },
-          dados.nome
-        ),
-        dados.slogan
-          ? h(
-              "div",
-              {
-                style: {
-                  fontFamily: pair.textoFamily,
-                  fontWeight: 400,
-                  fontSize: `${sloganSize}px`,
-                  color: theme.mutedTextColor,
-                  marginTop: "6px",
-                },
-              },
-              dados.slogan
-            )
-          : null,
-        (style === "informativo" || dados.servicos) && height >= 300
-          ? h(
-              "div",
-              {
-                style: {
-                  fontFamily: pair.tituloFamily,
-                  fontWeight: 400,
-                  fontSize: `${metaSize}px`,
-                  color: theme.textColor,
-                  marginTop: "10px",
-                  backgroundColor: theme.badgeBg,
-                  padding: "5px 12px",
-                  borderRadius: "6px",
-                },
-              },
-              dados.servicos || SECTORS[dados.sector]?.rotulo || ""
-            )
-          : null
-      )
-    ),
-    style === "informativo" && contactItems
-      ? h(
           "div",
           {
             style: {
               display: "flex",
               flexDirection: "column",
-              alignItems: "flex-end",
               justifyContent: "center",
-              backgroundColor: theme.badgeBg,
-              padding: "12px 18px",
-              borderRadius: "10px",
-              maxWidth: "32%",
             },
           },
-          dados.telefone
-            ? h(
-                "div",
-                {
-                  style: {
-                    fontFamily: pair.tituloFamily,
-                    fontWeight: pair.tituloWeight,
-                    fontSize: `${metaSize}px`,
-                    color: theme.textColor,
-                  },
-                },
-                dados.telefone
-              )
-            : null,
-          dados.website
+          h(
+            "div",
+            {
+              style: {
+                fontFamily: pair.tituloFamily,
+                fontWeight: pair.tituloWeight,
+                fontSize: `${titleSize}px`,
+                color: theme.textColor,
+                lineHeight: 1.08,
+              },
+            },
+            dados.nome
+          ),
+          dados.slogan
             ? h(
                 "div",
                 {
                   style: {
                     fontFamily: pair.textoFamily,
                     fontWeight: 400,
-                    fontSize: `${Math.max(11, metaSize - 2)}px`,
+                    fontSize: `${sloganSize}px`,
                     color: theme.mutedTextColor,
-                    marginTop: "4px",
+                    marginTop: "6px",
                   },
                 },
-                dados.website.replace(/^https?:\/\//, "")
+                dados.slogan
+              )
+            : null,
+          style === "informativo" && srvText && safeH >= 280
+            ? h(
+                "div",
+                {
+                  style: {
+                    fontFamily: pair.tituloFamily,
+                    fontWeight: 400,
+                    fontSize: `${metaSize}px`,
+                    color: theme.textColor,
+                    marginTop: "10px",
+                    backgroundColor: theme.badgeBg,
+                    padding: "5px 12px",
+                    borderRadius: "6px",
+                  },
+                },
+                srvText
               )
             : null
         )
-      : null
-  );
+      ),
+      style === "informativo" && (telText || webText)
+        ? h(
+            "div",
+            {
+              style: {
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-end",
+                justifyContent: "center",
+                backgroundColor: theme.badgeBg,
+                padding: "12px 18px",
+                borderRadius: "10px",
+                maxWidth: "32%",
+              },
+            },
+            telText
+              ? h(
+                  "div",
+                  {
+                    style: {
+                      fontFamily: pair.tituloFamily,
+                      fontWeight: pair.tituloWeight,
+                      fontSize: `${metaSize}px`,
+                      color: theme.textColor,
+                    },
+                  },
+                  telText
+                )
+              : null,
+            webText
+              ? h(
+                  "div",
+                  {
+                    style: {
+                      fontFamily: pair.textoFamily,
+                      fontWeight: 400,
+                      fontSize: `${Math.max(11, metaSize - 2)}px`,
+                      color: theme.mutedTextColor,
+                      marginTop: "4px",
+                    },
+                  },
+                  webText
+                )
+              : null
+          )
+        : null
+    );
+  }
 
   const rootElement = isYoutubeBanner
     ? h(
@@ -870,7 +1226,6 @@ export async function renderInstagramPost(params: {
     fontPairId,
     processedPng,
     whiteLogoPng,
-    isDarkMonochrome,
     photoBuffer,
   } = params;
 
@@ -890,6 +1245,16 @@ export async function renderInstagramPost(params: {
     .map((s) => s.trim())
     .filter(Boolean)
     .slice(0, 4);
+
+  const fittedPostLogo = await prepareFittedLogoElement({
+    isDarkBg: theme.isDarkBg,
+    processedPng,
+    whiteLogoPng,
+    contrastBgHex: theme.bgRefHex,
+    targetHeight: style === "minimal" ? 105 : 132,
+    maxWidth: style === "minimal" ? 360 : 480,
+    maxHeight: style === "minimal" ? 115 : 150,
+  });
 
   const element = h(
     "div",
@@ -915,15 +1280,7 @@ export async function renderInstagramPost(params: {
           justifyContent: "space-between",
         },
       },
-      renderThemedLogoElement({
-        isDarkBg: theme.isDarkBg,
-        isDarkMonochrome,
-        processedPng,
-        whiteLogoPng,
-        paleta,
-        width: style === "minimal" ? 180 : 250,
-        height: style === "minimal" ? 110 : 155,
-      }),
+      fittedPostLogo.element,
       h(
         "div",
         {
@@ -1099,7 +1456,6 @@ export async function renderInstagramStory(params: {
     fontPairId,
     processedPng,
     whiteLogoPng,
-    isDarkMonochrome,
     photoBuffer,
   } = params;
 
@@ -1113,6 +1469,16 @@ export async function renderInstagramStory(params: {
 
   const theme = getStyleThemeColors(style, paleta);
   const { pair, fonts } = getSatoriFontsForPair(fontPairId);
+
+  const fittedStoryLogo = await prepareFittedLogoElement({
+    isDarkBg: theme.isDarkBg,
+    processedPng,
+    whiteLogoPng,
+    contrastBgHex: theme.bgRefHex,
+    targetHeight: 165,
+    maxWidth: 600,
+    maxHeight: 185,
+  });
 
   const element = h(
     "div",
@@ -1139,15 +1505,7 @@ export async function renderInstagramStory(params: {
           alignItems: "flex-start",
         },
       },
-      renderThemedLogoElement({
-        isDarkBg: theme.isDarkBg,
-        isDarkMonochrome,
-        processedPng,
-        whiteLogoPng,
-        paleta,
-        width: 300,
-        height: 190,
-      })
+      fittedStoryLogo.element
     ),
     h(
       "div",
@@ -1426,7 +1784,6 @@ export async function renderBusinessCardPdf(params: {
     fontPairId,
     processedPng,
     whiteLogoPng,
-    isDarkMonochrome,
     photoBuffer,
   } = params;
 
@@ -1439,6 +1796,16 @@ export async function renderBusinessCardPdf(params: {
     style,
     paleta,
     photoBuffer,
+  });
+
+  const fittedFrontLogo = await prepareFittedLogoElement({
+    isDarkBg: theme.isDarkBg,
+    processedPng,
+    whiteLogoPng,
+    contrastBgHex: theme.bgRefHex,
+    targetHeight: !dados.simbolo ? 210 : 185,
+    maxWidth: !dados.simbolo ? 780 : 320,
+    maxHeight: 250,
   });
 
   const frontEl = h(
@@ -1455,30 +1822,24 @@ export async function renderBusinessCardPdf(params: {
         padding: `${bleedPx + 40}px`,
       },
     },
-    renderThemedLogoElement({
-      isDarkBg: theme.isDarkBg,
-      isDarkMonochrome,
-      processedPng,
-      whiteLogoPng,
-      paleta,
-      width: 280,
-      height: 175,
-    }),
-    h(
-      "div",
-      {
-        style: {
-          fontFamily: pair.tituloFamily,
-          fontWeight: pair.tituloWeight,
-          fontSize: "46px",
-          color: theme.textColor,
-          marginTop: "24px",
-          textAlign: "center",
-        },
-      },
-      dados.nome
-    ),
-    dados.slogan
+    fittedFrontLogo.element,
+    dados.simbolo
+      ? h(
+          "div",
+          {
+            style: {
+              fontFamily: pair.tituloFamily,
+              fontWeight: pair.tituloWeight,
+              fontSize: "46px",
+              color: theme.textColor,
+              marginTop: "24px",
+              textAlign: "center",
+            },
+          },
+          dados.nome
+        )
+      : null,
+    dados.simbolo && dados.slogan
       ? h(
           "div",
           {
@@ -1492,6 +1853,21 @@ export async function renderBusinessCardPdf(params: {
             },
           },
           dados.slogan
+        )
+      : !dados.simbolo && dados.website
+      ? h(
+          "div",
+          {
+            style: {
+              fontFamily: pair.textoFamily,
+              fontWeight: 400,
+              fontSize: "22px",
+              color: theme.mutedTextColor,
+              marginTop: "24px",
+              textAlign: "center",
+            },
+          },
+          dados.website.replace(/^https?:\/\//, "")
         )
       : null
   );
@@ -1683,7 +2059,6 @@ export async function renderLetterheadPdf(params: {
     fontPairId,
     processedPng,
     whiteLogoPng,
-    isDarkMonochrome,
     photoBuffer,
   } = params;
 
@@ -1696,6 +2071,16 @@ export async function renderLetterheadPdf(params: {
     style,
     paleta,
     photoBuffer,
+  });
+
+  const fittedHeaderLogo = await prepareFittedLogoElement({
+    isDarkBg: theme.isDarkBg,
+    processedPng,
+    whiteLogoPng,
+    contrastBgHex: theme.bgRefHex,
+    targetHeight: !dados.simbolo ? 128 : 115,
+    maxWidth: !dados.simbolo ? 520 : 180,
+    maxHeight: 148,
   });
 
   const headerFgEl = h(
@@ -1722,51 +2107,45 @@ export async function renderLetterheadPdf(params: {
           gap: "28px",
         },
       },
-      renderThemedLogoElement({
-        isDarkBg: theme.isDarkBg,
-        isDarkMonochrome,
-        processedPng,
-        whiteLogoPng,
-        paleta,
-        width: 180,
-        height: 115,
-      }),
-      h(
-        "div",
-        {
-          style: {
-            display: "flex",
-            flexDirection: "column",
-          },
-        },
-        h(
-          "div",
-          {
-            style: {
-              fontFamily: pair.tituloFamily,
-              fontWeight: pair.tituloWeight,
-              fontSize: "40px",
-              color: theme.textColor,
+      fittedHeaderLogo.element,
+      dados.simbolo
+        ? h(
+            "div",
+            {
+              style: {
+                display: "flex",
+                flexDirection: "column",
+              },
             },
-          },
-          dados.nome
-        ),
-        dados.slogan
-          ? h(
+            h(
               "div",
               {
                 style: {
-                  fontFamily: pair.textoFamily,
-                  fontWeight: 400,
-                  fontSize: "20px",
-                  color: theme.mutedTextColor,
-                  marginTop: "6px",
+                  fontFamily: pair.tituloFamily,
+                  fontWeight: pair.tituloWeight,
+                  fontSize: "40px",
+                  color: theme.textColor,
                 },
               },
-              dados.slogan
-            )
-          : null
-      )
+              dados.nome
+            ),
+            dados.slogan
+              ? h(
+                  "div",
+                  {
+                    style: {
+                      fontFamily: pair.textoFamily,
+                      fontWeight: 400,
+                      fontSize: "20px",
+                      color: theme.mutedTextColor,
+                      marginTop: "6px",
+                    },
+                  },
+                  dados.slogan
+                )
+              : null
+          )
+        : null
     ),
     dados.servicos
       ? h(

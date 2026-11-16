@@ -7,8 +7,11 @@ import {
   SECTORS,
   SectorId,
 } from "../formats";
-import { getSatoriFontsForPair } from "../fonts";
-import { buildBrandPalette, hslToHex, mixHex } from "../palette";
+import {
+  getGeometricSansStudioFonts,
+  getSatoriFontsForPair,
+} from "../fonts";
+import { buildBrandPalette, hexToRgb, hslToHex, mixHex, rgbToHsl } from "../palette";
 import { requestAiConceptEnhancement } from "./ai-provider";
 
 const h = React.createElement;
@@ -31,6 +34,13 @@ export interface QuestionnaireInputA {
 
 export type DirectionId = "classica" | "contemporanea";
 
+export type WordmarkLockupStyle =
+  | "classic-split"
+  | "editorial-serif"
+  | "crested-eyebrow"
+  | "modern-geometric"
+  | "modern-monolith";
+
 export interface StudioLogoOption {
   id: string;
   directionId: DirectionId;
@@ -44,7 +54,12 @@ export interface StudioLogoOption {
   logoSvg: string;
   simboloSvg: string;
   symbolStyleVariant: number; // 1..6
-  lockupLayout: "left-emblem" | "badge-framed" | "stacked-crest" | "editorial-split";
+  lockupLayout:
+    | "left-emblem"
+    | "badge-framed"
+    | "stacked-crest"
+    | "editorial-split";
+  wordmarkStyle?: WordmarkLockupStyle;
 }
 
 export interface FinalVariantsA {
@@ -53,6 +68,7 @@ export interface FinalVariantsA {
   simboloSvg: string;
   monocromaticoSvg: string;
   negativoSvg: string;
+  negativoTransparenteSvg?: string;
 }
 
 const STOPWORDS_PT = new Set([
@@ -78,6 +94,7 @@ const STOPWORDS_PT = new Set([
 export function extractBrandTokens(nome: string): {
   mainWord: string;
   restWords: string;
+  fullUpper: string;
   initials: string;
   firstInitial: string;
   secondInitial: string;
@@ -108,6 +125,7 @@ export function extractBrandTokens(nome: string): {
   return {
     mainWord: rawWords[0] || "Marca",
     restWords: rawWords.slice(1).join(" "),
+    fullUpper: (nome || "Marca").trim().toUpperCase(),
     initials: `${firstInitial}${secondInitial}`,
     firstInitial,
     secondInitial,
@@ -167,8 +185,8 @@ export function derivePalettesForDirections(input: QuestionnaireInputA): {
     entry.keywords.some((kw) => avoidNorm.includes(kw))
   );
 
-  const isAvoidedHue = (h: number) =>
-    matchedAvoids.some((av) => hueDistance(h, av.h) < 34);
+  const isAvoidedHue = (hVal: number) =>
+    matchedAvoids.some((av) => hueDistance(hVal, av.h) < 34);
 
   let baseH1 = matchedPrefs[0]?.h ?? sectorDefaults.h1;
   const baseS1 = matchedPrefs[0]?.s ?? sectorDefaults.s1;
@@ -189,41 +207,232 @@ export function derivePalettesForDirections(input: QuestionnaireInputA): {
     }
   }
 
-  // Direction 1 (Clássica): Warm, rich, heritage tones anchored in preferred colors
+  // Direção I (Clássica): tons de ofício ricos ancorados nas cores preferidas
   const classicaPalette = buildBrandPalette({
     primaria: hslToHex(baseH1, baseS1, baseL1),
     secundaria: hslToHex(baseH2, baseS2, baseL2),
-    papel: hslToHex(baseH1, 26, 97),
-    tinta: hslToHex(baseH1, 32, 13),
+    papel: hslToHex(baseH1, 24, 97),
+    tinta: hslToHex(baseH1, 30, 14),
   });
 
-  // Direction 2 (Contemporânea): Distinctly bolder chromatic balance & deeper contrast
-  let contempH1 = matchedPrefs[1]?.h ?? (baseH1 + 185) % 360;
+  // Direção II (Contemporânea): equilíbrio arquitetónico contrastante e nítido
+  let contempH1 = (baseH1 + 195) % 360;
   if (isAvoidedHue(contempH1)) {
-    contempH1 = (baseH1 + 42) % 360;
+    contempH1 = (baseH2 + 24) % 360;
   }
   const contempPrimary =
     matchedPrefs.length >= 2
-      ? hslToHex(baseH2, Math.min(82, baseS2 + 6), Math.max(26, baseL2 - 10))
-      : hslToHex((baseH1 + 160) % 360, 58, 28);
-  const contempSecondary = hslToHex(baseH1, Math.min(86, baseS1 + 10), Math.min(56, baseL1 + 8));
+      ? hslToHex(baseH1, Math.min(78, baseS1 + 6), Math.max(32, baseL1 - 4))
+      : hslToHex(contempH1, 64, 30);
+  const contempSecondary = hslToHex(
+    matchedPrefs[1]?.h ?? (baseH1 + 36) % 360,
+    80,
+    46
+  );
 
   const contemporaneaPalette = buildBrandPalette({
     primaria: contempPrimary,
     secundaria: contempSecondary,
-    papel: hslToHex(baseH2, 18, 96),
-    tinta: hslToHex((baseH1 + 180) % 360, 28, 12),
+    papel: "#F6F5F2",
+    tinta: hslToHex(contempH1, 32, 13),
   });
 
   return { classicaPalette, contemporaneaPalette };
 }
 
 /**
- * Desenha o símbolo vectorial de estúdio (em SVG puro, 320×320 viewBox)
- * com 6 composições arquitectónicas e emblemáticas distintas (3 clássicas e 3 contemporâneas),
- * adaptadas ao sector e às iniciais da marca. Sem formas stock banais.
+ * Converte as iniciais geométricas num conjunto de caminhos vectoriais <path> puros (via Satori)
+ * para construir monogramas contemporâneos verdadeiros e escaláveis sem dependência de fontes do sistema.
  */
-export function buildStudioSymbolSvg(params: {
+async function renderMonogramPathsInner(params: {
+  firstInitial: string;
+  secondInitial: string;
+  colorA: string;
+  colorB: string;
+  accentColor: string;
+  variant: "interlocking-portal" | "split-monolith" | "octagon-crest" | "diagonal-ribbon";
+  isSingleColor: boolean;
+}): Promise<string> {
+  const {
+    firstInitial,
+    secondInitial,
+    colorA,
+    colorB,
+    accentColor,
+    variant,
+    isSingleColor,
+  } = params;
+
+  const fonts = getGeometricSansStudioFonts();
+  const cB = isSingleColor ? colorA : colorB;
+  const cAcc = isSingleColor ? colorA : accentColor;
+
+  if (variant === "split-monolith") {
+    const el = h(
+      "div",
+      {
+        style: {
+          width: "320px",
+          height: "320px",
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          position: "relative",
+        },
+      },
+      h(
+        "div",
+        {
+          style: {
+            fontFamily: "Manrope",
+            fontWeight: 800,
+            fontSize: "136px",
+            color: colorA,
+            lineHeight: 0.9,
+            marginRight: "14px",
+          },
+        },
+        firstInitial
+      ),
+      h("div", {
+        style: {
+          width: "10px",
+          height: "146px",
+          backgroundColor: cAcc,
+          borderRadius: "5px",
+        },
+      }),
+      h(
+        "div",
+        {
+          style: {
+            fontFamily: "Manrope",
+            fontWeight: 800,
+            fontSize: "136px",
+            color: cB,
+            lineHeight: 0.9,
+            marginLeft: "14px",
+          },
+        },
+        secondInitial
+      )
+    );
+    const svg = await satori(el, { width: 320, height: 320, fonts });
+    return extractSvgInner(svg);
+  }
+
+  if (variant === "octagon-crest") {
+    const el = h(
+      "div",
+      {
+        style: {
+          width: "320px",
+          height: "320px",
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+        },
+      },
+      h(
+        "div",
+        {
+          style: {
+            fontFamily: "Outfit",
+            fontWeight: 800,
+            fontSize: "118px",
+            color: colorA,
+            letterSpacing: "-0.04em",
+            lineHeight: 1,
+          },
+        },
+        firstInitial
+      ),
+      h(
+        "div",
+        {
+          style: {
+            fontFamily: "Outfit",
+            fontWeight: 700,
+            fontSize: "118px",
+            color: cB,
+            letterSpacing: "-0.04em",
+            lineHeight: 1,
+            marginLeft: "4px",
+            marginTop: "22px",
+          },
+        },
+        secondInitial
+      )
+    );
+    const svg = await satori(el, { width: 320, height: 320, fonts });
+    return extractSvgInner(svg);
+  }
+
+  // Default "interlocking-portal" / "diagonal-ribbon": crisp staggered heavy geometric initials
+  const el = h(
+    "div",
+    {
+      style: {
+        width: "320px",
+        height: "320px",
+        display: "flex",
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+      },
+    },
+    h(
+      "div",
+      {
+        style: {
+          fontFamily: "Outfit",
+          fontWeight: 800,
+          fontSize: "138px",
+          color: colorA,
+          lineHeight: 0.9,
+          marginBottom: "18px",
+          marginRight: "-8px",
+        },
+      },
+      firstInitial
+    ),
+    h(
+      "div",
+      {
+        style: {
+          fontFamily: "Outfit",
+          fontWeight: 800,
+          fontSize: "138px",
+          color: cB,
+          lineHeight: 0.9,
+          marginTop: "26px",
+        },
+      },
+      secondInitial
+    )
+  );
+
+  const svg = await satori(el, { width: 320, height: 320, fonts });
+  return extractSvgInner(svg);
+}
+
+function extractSvgInner(svg: string): string {
+  const start = svg.indexOf(">");
+  const end = svg.lastIndexOf("</svg>");
+  if (start === -1 || end === -1 || end <= start) return "";
+  return svg.slice(start + 1, end);
+}
+
+/**
+ * Desenha o símbolo vectorial de estúdio (viewBox 320×320):
+ * - Espaço negativo limpo (ZERO círculos tracejados, ZERO caixas pesadas banais).
+ * - Direção I (Clássica): emblemas arquitectónicos e botânicos com 6 proporções/pesos distintos.
+ * - Direção II (Contemporânea): monogramas geométricos de linhas abertas e símbolos em linha contínua.
+ * - Total suporte para renderização a cores, monocromática e negativa transparente sem fusão de manchas.
+ */
+export async function buildStudioSymbolSvg(params: {
   sector: SectorId;
   directionId: DirectionId;
   symbolStyleVariant: number; // 1..6
@@ -234,140 +443,325 @@ export function buildStudioSymbolSvg(params: {
   inkHex: string;
   paperHex: string;
   monochromeHex?: string;
-}): string {
+  isNegativeOnDark?: boolean;
+}): Promise<string> {
   const {
     sector,
     directionId,
     symbolStyleVariant,
+    firstInitial,
+    secondInitial,
     primaryHex,
     secondaryHex,
     inkHex,
     paperHex,
     monochromeHex,
+    isNegativeOnDark = false,
   } = params;
 
+  const isSingleInk = Boolean(monochromeHex);
   const cPrim = monochromeHex || primaryHex;
   const cSec = monochromeHex || secondaryHex;
   const cInk = monochromeHex || inkHex;
   const cPaper = monochromeHex ? "#FFFFFF" : paperHex;
 
-  // Sector motif inner path (320x320 coordinate space, centered at 160,160)
-  const renderSectorCoreMotif = (variant: number): string => {
-    if (sector === "restauracao") {
-      if (directionId === "classica") {
-        // Vaulted artisan stone oven arch + rising wheat ear + hearth glow
-        return `
-          <!-- Abóbada de forno tradicional e espiga de trigo -->
-          <path d="M 76 238 L 76 146 C 76 92, 114 56, 160 56 C 206 56, 244 92, 244 146 L 244 238 Z" fill="${cPrim}" />
-          <path d="M 96 238 L 96 150 C 96 108, 124 78, 160 78 C 196 78, 224 108, 224 150 L 224 238 Z" fill="${cPaper}" />
-          <path d="M 114 238 L 114 156 C 114 124, 134 100, 160 100 C 186 100, 206 124, 206 156 L 206 238 Z" fill="${cInk}" />
-          ${
-            variant % 2 === 1
-              ? `<path d="M 128 238 C 128 198, 142 176, 160 176 C 178 176, 192 198, 192 238 Z" fill="${cSec}" />`
-              : `<circle cx="160" cy="198" r="24" fill="${cSec}" />`
-          }
-          <!-- Espiga botânica central -->
-          <rect x="157.5" y="114" width="5" height="114" rx="2.5" fill="${cPaper}" />
-          <ellipse cx="145" cy="134" rx="10.5" ry="5" transform="rotate(-32 145 134)" fill="${cSec}" />
-          <ellipse cx="175" cy="134" rx="10.5" ry="5" transform="rotate(32 175 134)" fill="${cSec}" />
-          <ellipse cx="144" cy="154" rx="11" ry="5.5" transform="rotate(-32 144 154)" fill="${cSec}" />
-          <ellipse cx="176" cy="154" rx="11" ry="5.5" transform="rotate(32 176 154)" fill="${cSec}" />
-          <ellipse cx="145" cy="174" rx="10.5" ry="5" transform="rotate(-32 145 174)" fill="${cPaper}" />
-          <ellipse cx="175" cy="174" rx="10.5" ry="5" transform="rotate(32 175 174)" fill="${cPaper}" />
-          <ellipse cx="160" cy="112" rx="5" ry="11" fill="${cSec}" />
-          <rect x="64" y="244" width="192" height="14" rx="7" fill="${cInk}" />
-        `;
-      } else {
-        // Contemporary geometric sun-arch & terraced valley grain emblem
-        return `
-          <!-- Emblema geométrico contemporâneo: Sol nascente no vale + lâmina de trigo -->
-          <rect x="52" y="52" width="216" height="216" rx="${variant === 2 ? "48" : "28"}" fill="${cInk}" />
-          <path d="M 84 220 C 84 152, 118 112, 160 112 C 202 112, 236 152, 236 220 Z" fill="${cPrim}" />
-          <circle cx="160" cy="132" r="34" fill="${cSec}" />
-          <!-- Ondas de seara / sulcos do vale -->
-          <path d="M 76 220 Q 118 192 160 220 T 244 220 L 244 242 L 76 242 Z" fill="${cPaper}" />
-          <path d="M 160 72 L 174 112 L 160 152 L 146 112 Z" fill="${cPaper}" />
-          <circle cx="160" cy="72" r="6" fill="${cSec}" />
-        `;
+  // -------------------------------------------------------------------------
+  // DIREÇÃO II — CONTEMPORÂNEA (Monogramas Geométricos + Linha Contínua)
+  // -------------------------------------------------------------------------
+  if (directionId === "contemporanea") {
+    const v = ((symbolStyleVariant - 1) % 6) + 1;
+
+    // Variante 2 (Padrão Direção II Inicial): Monograma Geométrico entrelaçado + Arco/Portal aberto moderno
+    if (v === 2) {
+      const monogramInner = await renderMonogramPathsInner({
+        firstInitial,
+        secondInitial,
+        colorA: cInk,
+        colorB: cPrim,
+        accentColor: cSec,
+        variant: "interlocking-portal",
+        isSingleColor: isSingleInk,
+      });
+
+      const sectorCrown =
+        sector === "restauracao"
+          ? `
+            <!-- Recortes minimalistas de pão artesanal / chama geométrica no topo -->
+            <line x1="142" y1="42" x2="154" y2="62" stroke="${cSec}" stroke-width="9" stroke-linecap="round" />
+            <line x1="168" y1="36" x2="176" y2="58" stroke="${cSec}" stroke-width="9" stroke-linecap="round" />
+          `
+          : `
+            <polygon points="160,24 176,40 160,56 144,40" fill="${cSec}" />
+          `;
+
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+        <!-- Portal geométrico aberto moderno em linha limpa -->
+        <path d="M 62 248 L 62 152 C 62 88, 104 48, 160 48 C 216 48, 258 88, 258 152" fill="none" stroke="${cPrim}" stroke-width="13" stroke-linecap="round" />
+        <line x1="62" y1="268" x2="258" y2="268" stroke="${cSec}" stroke-width="11" stroke-linecap="round" />
+        ${sectorCrown}
+        <g transform="translate(0, 6)">
+          ${monogramInner}
+        </g>
+      </svg>`;
+    }
+
+    // Variante 1 (Contemporânea R1.A): Símbolo puro em linha contínua (Pão / Espiga / Geometria contínua)
+    if (v === 1) {
+      if (sector === "restauracao") {
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+          <!-- Símbolo em linha contínua: base da côdea em arco que sobe em espiga geométrica minimalista -->
+          <path d="M 48 228 L 272 228 C 266 154, 222 114, 160 114 C 102 114, 58 150, 50 218" fill="none" stroke="${cInk}" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M 160 228 L 160 60 C 160 48, 172 42, 182 48" fill="none" stroke="${cPrim}" stroke-width="13" stroke-linecap="round" />
+          <!-- Três traços oblíquos limpos de grão / corte de padeiro -->
+          <line x1="126" y1="166" x2="150" y2="146" stroke="${cSec}" stroke-width="12" stroke-linecap="round" />
+          <line x1="170" y1="138" x2="196" y2="118" stroke="${cSec}" stroke-width="12" stroke-linecap="round" />
+          <line x1="128" y1="124" x2="150" y2="104" stroke="${cSec}" stroke-width="12" stroke-linecap="round" />
+          <line x1="168" y1="96" x2="192" y2="76" stroke="${cPrim}" stroke-width="11" stroke-linecap="round" />
+          <line x1="78" y1="254" x2="242" y2="254" stroke="${cPrim}" stroke-width="10" stroke-linecap="round" />
+        </svg>`;
       }
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+        <path d="M 66 218 L 66 112 L 160 58 L 254 112 L 254 208 L 160 262 L 106 231 L 106 135 L 160 104 L 214 135" fill="none" stroke="${cInk}" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" />
+        <circle cx="160" cy="160" r="18" fill="${cSec}" />
+      </svg>`;
     }
 
-    if (sector === "servicos" || sector === "construcao" || sector === "tecnologia") {
-      if (directionId === "classica") {
-        return `
-          <polygon points="104,44 216,44 276,104 276,216 216,276 104,276 44,216 44,104" fill="${cInk}" />
-          <polygon points="112,62 208,62 258,112 258,208 208,258 112,258 62,208 62,112" fill="${cPaper}" />
-          <path d="M 160 84 L 222 198 L 194 198 L 160 132 L 126 198 L 98 198 Z" fill="${cPrim}" />
-          <rect x="116" y="172" width="88" height="14" rx="7" fill="${cSec}" />
-          <circle cx="160" cy="96" r="14" fill="${cSec}" />
-        `;
-      } else {
-        return `
-          <rect x="48" y="48" width="224" height="224" rx="40" fill="${cPrim}" />
-          <path d="M 96 160 L 160 96 L 224 160 L 160 224 Z" fill="${cPaper}" />
-          <path d="M 124 160 L 160 124 L 196 160 L 160 196 Z" fill="${cInk}" />
-          <circle cx="160" cy="160" r="14" fill="${cSec}" />
-        `;
+    // Variante 3 (Contemporânea R1.B): Monograma em Monólito Dividido com Cantoneiras Arquitectónicas
+    if (v === 3) {
+      const monogramInner = await renderMonogramPathsInner({
+        firstInitial,
+        secondInitial,
+        colorA: cInk,
+        colorB: cPrim,
+        accentColor: cSec,
+        variant: "split-monolith",
+        isSingleColor: isSingleInk,
+      });
+
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+        <!-- Cantoneiras minimalistas sem caixa fechada -->
+        <path d="M 38 96 L 38 42 L 92 42" fill="none" stroke="${cSec}" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" />
+        <path d="M 282 224 L 282 278 L 228 278" fill="none" stroke="${cPrim}" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" />
+        ${monogramInner}
+      </svg>`;
+    }
+
+    // Variante 4: Octógono linear geométrico com monograma centrado
+    if (v === 4) {
+      const monogramInner = await renderMonogramPathsInner({
+        firstInitial,
+        secondInitial,
+        colorA: cInk,
+        colorB: cPrim,
+        accentColor: cSec,
+        variant: "octagon-crest",
+        isSingleColor: isSingleInk,
+      });
+
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+        <polygon points="104,34 216,34 286,104 286,216 216,286 104,286 34,216 34,104" fill="none" stroke="${cPrim}" stroke-width="11" stroke-linejoin="round" />
+        <g transform="scale(0.86) translate(26, 26)">
+          ${monogramInner}
+        </g>
+      </svg>`;
+    }
+
+    // Variante 5: Emblema em linha dupla paralela / trigo moderno minimalista
+    if (v === 5) {
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+        <path d="M 56 236 C 56 124, 102 68, 160 68 C 218 68, 264 124, 264 236" fill="none" stroke="${cInk}" stroke-width="15" stroke-linecap="round" />
+        <path d="M 96 236 C 96 154, 124 110, 160 110 C 196 110, 224 154, 224 236" fill="none" stroke="${cPrim}" stroke-width="13" stroke-linecap="round" />
+        <path d="M 160 236 L 160 144" fill="none" stroke="${cSec}" stroke-width="12" stroke-linecap="round" />
+        <circle cx="160" cy="140" r="10" fill="${cSec}" />
+        <line x1="48" y1="262" x2="272" y2="262" stroke="${cInk}" stroke-width="12" stroke-linecap="round" />
+      </svg>`;
+    }
+
+    // Variante 6: Arco contínuo assimétrico com monograma integrado
+    const monogramRibbon = await renderMonogramPathsInner({
+      firstInitial,
+      secondInitial,
+      colorA: cInk,
+      colorB: cPrim,
+      accentColor: cSec,
+      variant: "diagonal-ribbon",
+      isSingleColor: isSingleInk,
+    });
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+      <path d="M 54 114 C 76 58, 138 34, 206 46 C 246 54, 270 78, 278 112" fill="none" stroke="${cSec}" stroke-width="11" stroke-linecap="round" />
+      <g transform="scale(0.84) translate(30, 18)">
+        ${monogramRibbon}
+      </g>
+      <line x1="68" y1="268" x2="252" y2="268" stroke="${cPrim}" stroke-width="12" stroke-linecap="round" />
+    </svg>`;
+  }
+
+  // -------------------------------------------------------------------------
+  // DIREÇÃO I — CLÁSSICA (Emblemas arquitectónicos e botânicos sem círculos tracejados)
+  // -------------------------------------------------------------------------
+  const cv = ((symbolStyleVariant - 1) % 6) + 1;
+
+  if (sector === "restauracao") {
+    // 1 (Direção I Inicial): Arco de forno tradicional em abóbada dupla limpa com espiga botânica (sem círculo tracejado!)
+    if (cv === 1) {
+      if (isSingleInk || isNegativeOnDark) {
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+          <!-- Versão monocromática/negativa com vazados transparentes nítidos em todos os grãos -->
+          <path d="M 76 242 L 76 146 C 76 92, 114 56, 160 56 C 206 56, 244 92, 244 146 L 244 242" fill="none" stroke="${cPrim}" stroke-width="20" stroke-linecap="butt" />
+          <path d="M 106 242 L 106 150 C 106 112, 128 88, 160 88 C 192 88, 214 112, 214 150 L 214 242" fill="none" stroke="${cInk}" stroke-width="10" />
+          <path d="M 130 242 C 130 206, 144 188, 160 188 C 176 188, 190 206, 190 242" fill="none" stroke="${cSec}" stroke-width="7" />
+          <line x1="160" y1="112" x2="160" y2="234" stroke="${cInk}" stroke-width="5.5" stroke-linecap="round" />
+          <ellipse cx="144" cy="134" rx="11" ry="5" transform="rotate(-32 144 134)" fill="${cSec}" />
+          <ellipse cx="176" cy="134" rx="11" ry="5" transform="rotate(32 176 134)" fill="${cSec}" />
+          <ellipse cx="143" cy="154" rx="11" ry="5" transform="rotate(-32 143 154)" fill="${cSec}" />
+          <ellipse cx="177" cy="154" rx="11" ry="5" transform="rotate(32 177 154)" fill="${cSec}" />
+          <ellipse cx="144" cy="174" rx="10" ry="5" transform="rotate(-32 144 174)" fill="${cInk}" />
+          <ellipse cx="176" cy="174" rx="10" ry="5" transform="rotate(32 176 174)" fill="${cInk}" />
+          <ellipse cx="160" cy="108" rx="5.5" ry="11" fill="${cSec}" />
+          <rect x="60" y="246" width="200" height="14" rx="7" fill="${cInk}" />
+        </svg>`;
       }
+
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+        <path d="M 76 242 L 76 146 C 76 92, 114 56, 160 56 C 206 56, 244 92, 244 146 L 244 242" fill="none" stroke="${cPrim}" stroke-width="20" stroke-linecap="butt" />
+        <path d="M 106 242 L 106 150 C 106 112, 128 88, 160 88 C 192 88, 214 112, 214 150 L 214 242 Z" fill="${cInk}" />
+        <path d="M 126 242 C 126 202, 140 180, 160 180 C 180 180, 194 202, 194 242 Z" fill="${cSec}" />
+        <rect x="157.5" y="112" width="5" height="120" rx="2.5" fill="${cPaper}" />
+        <ellipse cx="144" cy="134" rx="10.5" ry="5" transform="rotate(-32 144 134)" fill="${cSec}" />
+        <ellipse cx="176" cy="134" rx="10.5" ry="5" transform="rotate(32 176 134)" fill="${cSec}" />
+        <ellipse cx="143" cy="154" rx="11" ry="5.5" transform="rotate(-32 143 154)" fill="${cSec}" />
+        <ellipse cx="177" cy="154" rx="11" ry="5.5" transform="rotate(32 177 154)" fill="${cSec}" />
+        <ellipse cx="144" cy="174" rx="10.5" ry="5" transform="rotate(-32 144 174)" fill="${cPaper}" />
+        <ellipse cx="176" cy="174" rx="10.5" ry="5" transform="rotate(32 176 174)" fill="${cPaper}" />
+        <ellipse cx="160" cy="108" rx="5" ry="11" fill="${cSec}" />
+        <rect x="60" y="246" width="200" height="14" rx="7" fill="${cInk}" />
+      </svg>`;
     }
 
-    // Bespoke intertwined architectural crest & botanical/editorial emblem for all other sectors
-    if (directionId === "classica") {
-      return `
-        <path d="M 160 38 L 262 88 L 262 178 C 262 232, 218 268, 160 284 C 102 268, 58 232, 58 178 L 58 88 Z" fill="${cPrim}" />
-        <path d="M 160 58 L 244 100 L 244 176 C 244 220, 208 250, 160 264 C 112 250, 76 220, 76 176 L 76 100 Z" fill="${cPaper}" />
-        <path d="M 160 84 C 194 84, 218 112, 218 156 C 218 200, 194 226, 160 226 C 126 226, 102 200, 102 156 C 102 112, 126 84, 160 84 Z" fill="${cInk}" />
-        <path d="M 160 104 L 182 156 L 160 208 L 138 156 Z" fill="${cSec}" />
-        <circle cx="160" cy="156" r="10" fill="${cPaper}" />
-      `;
-    } else {
-      return `
-        <rect x="48" y="48" width="224" height="224" rx="52" fill="${cInk}" />
-        <path d="M 92 212 L 92 108 L 160 162 L 228 108 L 228 212 L 198 212 L 198 154 L 160 186 L 122 154 L 122 212 Z" fill="${cPaper}" />
-        <circle cx="160" cy="112" r="20" fill="${cSec}" />
-        <rect x="92" y="224" width="136" height="12" rx="6" fill="${cPrim}" />
-      `;
+    // 2 (Refinamento 1A): Portal Esguio Gravado em Traço Fino + Espiga Elegante Aberta (sem mancha pesada!)
+    if (cv === 2) {
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+        <!-- Arco ogival esguio e leve em traço contínuo duplo -->
+        <path d="M 92 252 L 92 134 C 92 74, 124 40, 160 40 C 196 40, 228 74, 228 134 L 228 252" fill="none" stroke="${cPrim}" stroke-width="11" stroke-linecap="round" />
+        <path d="M 116 252 L 116 140 C 116 96, 134 68, 160 68 C 186 68, 204 96, 204 140 L 204 252" fill="none" stroke="${cInk}" stroke-width="6.5" stroke-linecap="round" />
+        <!-- Chama / horizonte em arco delicado -->
+        <path d="M 134 252 C 134 226, 145 214, 160 214 C 175 214, 186 226, 186 252" fill="none" stroke="${cSec}" stroke-width="7" stroke-linecap="round" />
+        <!-- Espiga botânica esguia em espaço aberto -->
+        <line x1="160" y1="92" x2="160" y2="236" stroke="${cInk}" stroke-width="5" stroke-linecap="round" />
+        <ellipse cx="145" cy="118" rx="10" ry="4.5" transform="rotate(-38 145 118)" fill="${cSec}" />
+        <ellipse cx="175" cy="118" rx="10" ry="4.5" transform="rotate(38 175 118)" fill="${cSec}" />
+        <ellipse cx="144" cy="142" rx="10.5" ry="4.5" transform="rotate(-38 144 142)" fill="${cPrim}" />
+        <ellipse cx="176" cy="142" rx="10.5" ry="4.5" transform="rotate(38 176 142)" fill="${cPrim}" />
+        <ellipse cx="145" cy="166" rx="10" ry="4.5" transform="rotate(-38 145 166)" fill="${cSec}" />
+        <ellipse cx="175" cy="166" rx="10" ry="4.5" transform="rotate(38 175 166)" fill="${cSec}" />
+        <ellipse cx="160" cy="86" rx="4.5" ry="10" fill="${cSec}" />
+        <!-- Soleira fina bipartida -->
+        <line x1="72" y1="252" x2="248" y2="252" stroke="${cInk}" stroke-width="7" stroke-linecap="round" />
+        <line x1="104" y1="268" x2="216" y2="268" stroke="${cSec}" stroke-width="5" stroke-linecap="round" />
+      </svg>`;
     }
-  };
 
-  // Outer framing variations for rounds 1..3 so every refinement is visually distinct
-  const renderOuterOrnament = (): string => {
-    if (symbolStyleVariant === 1) {
-      return `<circle cx="160" cy="160" r="144" fill="none" stroke="${cSec}" stroke-width="4" stroke-dasharray="12 8" />`;
+    // 3 (Refinamento 1B): Selo Romano Largo & Silhueta Forte de Alto Contraste (tipo xilogravura)
+    if (cv === 3) {
+      if (isSingleInk || isNegativeOnDark) {
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+          <path d="M 48 232 L 48 168 C 48 96, 96 64, 160 64 C 224 64, 272 96, 272 168 L 272 232" fill="none" stroke="${cPrim}" stroke-width="26" stroke-linecap="butt" />
+          <path d="M 88 232 C 88 182, 118 156, 160 156 C 202 156, 232 182, 232 232" fill="none" stroke="${cSec}" stroke-width="14" stroke-linecap="round" />
+          <circle cx="160" cy="120" r="14" fill="${cSec}" />
+          <path d="M 132 104 L 160 144 L 188 104" fill="none" stroke="${cInk}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
+          <rect x="44" y="246" width="232" height="18" rx="4" fill="${cInk}" />
+        </svg>`;
+      }
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+        <!-- Cúpula larga de forno românico com base forte -->
+        <path d="M 46 232 L 46 168 C 46 94, 96 64, 160 64 C 224 64, 274 94, 274 168 L 274 232 Z" fill="${cPrim}" />
+        <!-- Curva solar / brasa em recorte largo -->
+        <path d="M 94 232 C 94 176, 122 148, 160 148 C 198 148, 226 176, 226 232 Z" fill="${cInk}" />
+        <path d="M 124 232 C 124 198, 138 182, 160 182 C 182 182, 196 198, 196 232 Z" fill="${cSec}" />
+        <!-- Coroa de trigo de 3 folhas em espaço negativo largo -->
+        <ellipse cx="160" cy="106" rx="10" ry="20" fill="${cPaper}" />
+        <ellipse cx="132" cy="122" rx="18" ry="8.5" transform="rotate(-34 132 122)" fill="${cPaper}" />
+        <ellipse cx="188" cy="122" rx="18" ry="8.5" transform="rotate(34 188 122)" fill="${cPaper}" />
+        <rect x="40" y="242" width="240" height="16" rx="5" fill="${cInk}" />
+        <rect x="74" y="264" width="172" height="8" rx="4" fill="${cSec}" />
+      </svg>`;
     }
-    if (symbolStyleVariant === 2) {
-      return `<rect x="20" y="20" width="280" height="280" rx="36" fill="none" stroke="${cPrim}" stroke-width="5" />`;
+
+    // 4: Arco com chave arquitetónica superior dividida
+    if (cv === 4) {
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+        <path d="M 66 244 L 66 146 C 66 96, 102 64, 146 58" fill="none" stroke="${cPrim}" stroke-width="18" stroke-linecap="round" />
+        <path d="M 174 58 C 218 64, 254 96, 254 146 L 254 244" fill="none" stroke="${cPrim}" stroke-width="18" stroke-linecap="round" />
+        <polygon points="160,34 174,56 160,78 146,56" fill="${cSec}" />
+        <path d="M 110 244 L 110 154 C 110 120, 130 98, 160 98 C 190 98, 210 120, 210 154 L 210 244" fill="none" stroke="${cInk}" stroke-width="12" stroke-linecap="round" />
+        <line x1="160" y1="126" x2="160" y2="232" stroke="${cSec}" stroke-width="8" stroke-linecap="round" />
+        <circle cx="160" cy="204" r="22" fill="${cSec}" />
+        <rect x="60" y="252" width="200" height="12" rx="6" fill="${cInk}" />
+      </svg>`;
     }
-    if (symbolStyleVariant === 3) {
-      return `
-        <polygon points="160,12 292,86 292,234 160,308 28,234 28,86" fill="none" stroke="${cSec}" stroke-width="5" />
-      `;
+
+    // 5: Escudo losango artesanal
+    if (cv === 5) {
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+        <polygon points="160,28 282,160 160,292 38,160" fill="none" stroke="${cPrim}" stroke-width="14" stroke-linejoin="round" />
+        <path d="M 112 204 L 112 146 C 112 114, 134 94, 160 94 C 186 94, 208 114, 208 146 L 208 204" fill="none" stroke="${cInk}" stroke-width="12" stroke-linecap="round" />
+        <line x1="160" y1="118" x2="160" y2="204" stroke="${cSec}" stroke-width="7" stroke-linecap="round" />
+        <ellipse cx="144" cy="146" rx="10" ry="5" transform="rotate(-32 144 146)" fill="${cSec}" />
+        <ellipse cx="176" cy="146" rx="10" ry="5" transform="rotate(32 176 146)" fill="${cSec}" />
+        <line x1="98" y1="212" x2="222" y2="212" stroke="${cInk}" stroke-width="10" stroke-linecap="round" />
+      </svg>`;
     }
-    if (symbolStyleVariant === 4) {
-      return `
-        <circle cx="160" cy="160" r="146" fill="none" stroke="${cInk}" stroke-width="3" />
-        <circle cx="160" cy="160" r="136" fill="none" stroke="${cSec}" stroke-width="2" />
-      `;
+
+    // 6: Coroa dupla geométrica clássica
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+      <path d="M 68 238 L 68 146 C 68 90, 108 54, 160 54 C 212 54, 252 90, 252 146 L 252 238" fill="none" stroke="${cPrim}" stroke-width="16" stroke-linecap="round" />
+      <path d="M 100 238 L 100 150 C 100 112, 126 88, 160 88 C 194 88, 220 112, 220 150 L 220 238" fill="none" stroke="${cSec}" stroke-width="10" stroke-linecap="round" />
+      <path d="M 132 238 C 132 190, 144 168, 160 168 C 176 168, 188 190, 188 238 Z" fill="${cInk}" />
+      <circle cx="160" cy="134" r="11" fill="${cSec}" />
+      <rect x="60" y="246" width="200" height="14" rx="7" fill="${cInk}" />
+    </svg>`;
+  }
+
+  // Outros sectores (Serviços, Construção, Tecnologia e Gerais — todos limpos sem círculos tracejados!)
+  if (
+    sector === "servicos" ||
+    sector === "construcao" ||
+    sector === "tecnologia"
+  ) {
+    if (cv === 1) {
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+        <polygon points="104,44 216,44 276,104 276,216 216,276 104,276 44,216 44,104" fill="none" stroke="${cInk}" stroke-width="16" stroke-linejoin="round" />
+        <path d="M 160 88 L 220 202 L 192 202 L 160 138 L 128 202 L 100 202 Z" fill="${cPrim}" />
+        <rect x="116" y="176" width="88" height="14" rx="7" fill="${cSec}" />
+        <circle cx="160" cy="96" r="14" fill="${cSec}" />
+      </svg>`;
     }
-    if (symbolStyleVariant === 5) {
-      return `
-        <rect x="24" y="24" width="272" height="272" rx="68" fill="none" stroke="${cSec}" stroke-width="6" />
-      `;
-    }
-    return `
-      <path d="M 42 80 L 42 42 L 80 42 M 240 42 L 278 42 L 278 80 M 278 240 L 278 278 L 240 278 M 80 278 L 42 278 L 42 240" fill="none" stroke="${cPrim}" stroke-width="6" stroke-linecap="round" />
-    `;
-  };
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+      <polygon points="160,36 272,100 272,220 160,284 48,220 48,100" fill="none" stroke="${cPrim}" stroke-width="14" stroke-linejoin="round" />
+      <path d="M 104 214 L 160 96 L 216 214" fill="none" stroke="${cInk}" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" />
+      <line x1="122" y1="180" x2="198" y2="180" stroke="${cSec}" stroke-width="13" stroke-linecap="round" />
+    </svg>`;
+  }
+
+  // Emblema heráldico / editorial limpo para restantes sectores
+  if (cv === 1) {
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
+      <path d="M 160 40 L 260 88 L 260 176 C 260 228, 218 264, 160 280 C 102 264, 60 228, 60 176 L 60 88 Z" fill="none" stroke="${cPrim}" stroke-width="16" stroke-linejoin="round" />
+      <path d="M 160 86 L 198 158 L 160 230 L 122 158 Z" fill="${cSec}" />
+      <circle cx="160" cy="158" r="16" fill="${cInk}" />
+    </svg>`;
+  }
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" width="1024" height="1024">
-  ${renderOuterOrnament()}
-  ${renderSectorCoreMotif(symbolStyleVariant)}
-</svg>`;
+    <path d="M 160 44 L 252 94 L 252 178 C 252 224, 214 258, 160 274 C 106 258, 68 224, 68 178 L 68 94 Z" fill="none" stroke="${cInk}" stroke-width="12" stroke-linejoin="round" />
+    <path d="M 116 158 C 116 126, 136 106, 160 106 C 184 106, 204 126, 204 158 C 204 190, 184 210, 160 210" fill="none" stroke="${cPrim}" stroke-width="14" stroke-linecap="round" />
+    <circle cx="160" cy="158" r="14" fill="${cSec}" />
+  </svg>`;
 }
 
 /**
  * Compõe o logótipo completo (símbolo + tipografia vectorial convertida em curvas via Satori)
- * para garantir tipografia de estúdio perfeitamente espaçada e 100% vectorial em SVG.
+ * com múltiplos layouts e hierarquias tipográficas verdadeiramente distintas.
  */
 export async function composeVectorLogoSvg(params: {
   nome: string;
@@ -377,7 +771,8 @@ export async function composeVectorLogoSvg(params: {
   paleta: BrandPalette;
   symbolSvg: string;
   layout: "horizontal" | "vertical" | "badge";
-  mode?: "color" | "monochrome" | "negative";
+  mode?: "color" | "monochrome" | "negative" | "negative-transparent";
+  wordmarkStyle?: WordmarkLockupStyle;
 }): Promise<string> {
   const {
     nome,
@@ -388,47 +783,71 @@ export async function composeVectorLogoSvg(params: {
     symbolSvg,
     layout,
     mode = "color",
+    wordmarkStyle = "classic-split",
   } = params;
 
-  const { pair, fonts } = getSatoriFontsForPair(fontPairId);
-  const { mainWord, restWords } = extractBrandTokens(nome);
+  const { pair, fonts: pairFonts } = getSatoriFontsForPair(fontPairId);
+  const sansFonts = getGeometricSansStudioFonts();
+  const seenFontKeys = new Set(
+    pairFonts.map((f) => `${f.name}:${f.weight}:${f.data.length}`)
+  );
+  const fonts = [
+    ...pairFonts,
+    ...sansFonts.filter(
+      (f) => !seenFontKeys.has(`${f.name}:${f.weight}:${f.data.length}`)
+    ),
+  ];
 
+  const { mainWord, restWords, fullUpper } = extractBrandTokens(nome);
   const symbolDataUrl = `data:image/svg+xml;base64,${Buffer.from(symbolSvg, "utf8").toString("base64")}`;
 
-  const titleColor =
-    mode === "negative"
-      ? "#FAF8F5"
-      : mode === "monochrome"
-      ? "#141413"
-      : paleta.tinta.hex;
+  const isLightOnDark = mode === "negative" || mode === "negative-transparent";
+  const isMono = mode === "monochrome";
+  const isPureNeg = mode === "negative-transparent";
 
-  const restColor =
-    mode === "negative"
-      ? paleta.secundaria.hex
-      : mode === "monochrome"
-      ? "#141413"
-      : paleta.primaria.hex;
+  const titleColor = isPureNeg
+    ? "#FAF8F5"
+    : isLightOnDark
+    ? "#FAF8F5"
+    : isMono
+    ? "#141413"
+    : paleta.tinta.hex;
 
-  const accentRuleColor =
-    mode === "negative"
-      ? paleta.primaria.hex
-      : mode === "monochrome"
-      ? "#141413"
-      : paleta.secundaria.hex;
+  const restColor = isPureNeg
+    ? "#FAF8F5"
+    : isLightOnDark
+    ? paleta.secundaria.hex
+    : isMono
+    ? "#141413"
+    : paleta.primaria.hex;
 
-  const subtitleColor =
-    mode === "negative"
-      ? "#E2E8F0"
-      : mode === "monochrome"
-      ? "#334155"
-      : paleta.neutro.hex;
+  const accentRuleColor = isPureNeg
+    ? "#FAF8F5"
+    : isLightOnDark
+    ? paleta.primaria.hex
+    : isMono
+    ? "#141413"
+    : paleta.secundaria.hex;
 
-  const bgStyle =
-    mode === "negative" ? paleta.tinta.hex : "transparent";
+  const subtitleColor = isPureNeg
+    ? "#FAF8F5"
+    : isLightOnDark
+    ? "#E5E0D8"
+    : isMono
+    ? "#334155"
+    : paleta.neutro.hex;
+
+  const bgStyle = mode === "negative" ? paleta.tinta.hex : "transparent";
+  const subText = (slogan || SECTORS[sector]?.rotulo || "").toUpperCase().slice(0, 44);
+
+  const isModernWordmark =
+    wordmarkStyle === "modern-geometric" || wordmarkStyle === "modern-monolith";
 
   if (layout === "vertical") {
     const width = 1000;
     const height = 1000;
+    const verticalTitleFamily = isModernWordmark ? "Manrope" : pair.tituloFamily;
+    const verticalSubFamily = isModernWordmark ? "Outfit" : pair.textoFamily;
     const el = h(
       "div",
       {
@@ -441,47 +860,74 @@ export async function composeVectorLogoSvg(params: {
           alignItems: "center",
           justifyContent: "center",
           backgroundColor: bgStyle,
-          padding: "72px",
+          padding: "56px",
         },
       },
       h("img", {
         src: symbolDataUrl,
-        width: 380,
-        height: 380,
+        width: 390,
+        height: 390,
         style: { objectFit: "contain" },
       }),
-      h(
-        "div",
-        {
-          style: {
-            fontFamily: pair.tituloFamily,
-            fontWeight: pair.tituloWeight,
-            fontSize: mainWord.length > 12 ? "76px" : "92px",
-            color: titleColor,
-            letterSpacing: "0.04em",
-            marginTop: "36px",
-            lineHeight: 1.05,
-            textAlign: "center",
-          },
-        },
-        mainWord.toUpperCase()
-      ),
-      restWords
+      wordmarkStyle === "editorial-serif"
         ? h(
             "div",
             {
               style: {
-                fontFamily: pair.textoFamily,
-                fontWeight: 400,
-                fontSize: "54px",
-                color: restColor,
-                marginTop: "8px",
+                fontFamily: "Fraunces",
+                fontWeight: 700,
+                fontSize: nome.length > 18 ? "66px" : "78px",
+                color: titleColor,
+                marginTop: "32px",
+                lineHeight: 1.06,
                 textAlign: "center",
               },
             },
-            restWords
+            nome
           )
-        : null,
+        : h(
+            "div",
+            {
+              style: {
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+              },
+            },
+            h(
+              "div",
+              {
+                style: {
+                  fontFamily: verticalTitleFamily,
+                  fontWeight: isModernWordmark ? 800 : pair.tituloWeight,
+                  fontSize: mainWord.length > 12 ? "74px" : "92px",
+                  color: titleColor,
+                  letterSpacing: isModernWordmark ? "-0.03em" : "0.04em",
+                  marginTop: "30px",
+                  lineHeight: 1.02,
+                  textAlign: "center",
+                },
+              },
+              mainWord.toUpperCase()
+            ),
+            restWords
+              ? h(
+                  "div",
+                  {
+                    style: {
+                      fontFamily: verticalSubFamily,
+                      fontWeight: isModernWordmark ? 600 : 400,
+                      fontSize: isModernWordmark ? "42px" : "52px",
+                      color: restColor,
+                      letterSpacing: isModernWordmark ? "0.14em" : "0em",
+                      marginTop: "8px",
+                      textAlign: "center",
+                    },
+                  },
+                  isModernWordmark ? restWords.toUpperCase() : restWords
+                )
+              : null
+          ),
       h("div", {
         style: {
           width: "140px",
@@ -495,49 +941,336 @@ export async function composeVectorLogoSvg(params: {
         "div",
         {
           style: {
-            fontFamily: pair.tituloFamily,
-            fontWeight: 400,
-            fontSize: "22px",
+            fontFamily: isModernWordmark ? "Outfit" : pair.tituloFamily,
+            fontWeight: isModernWordmark ? 500 : 400,
+            fontSize: "21px",
             letterSpacing: "0.18em",
             color: subtitleColor,
-            marginTop: "18px",
+            marginTop: "16px",
             textAlign: "center",
           },
         },
-        (slogan || SECTORS[sector]?.rotulo || "").toUpperCase().slice(0, 42)
+        subText
       )
     );
 
     return satori(el, { width, height, fonts });
   }
 
-  // Horizontal studio lockup (1400 x 520)
+  // Horizontal studio lockup (1400 x 520) com 5 arquiteturas visuais distintas
   const width = 1400;
   const height = 520;
-  const el = h(
-    "div",
-    {
+
+  let textBlock: React.ReactElement;
+  let dividerNode: React.ReactElement | null = null;
+  let gapPx = 46;
+
+  if (wordmarkStyle === "modern-geometric") {
+    // Direção II Contemporânea: 100% Sem-Serifa Geométrica forte (Manrope 800 + Outfit 600), ZERO serifas, barra vertical arquitectónica
+    gapPx = 40;
+    dividerNode = h("div", {
       style: {
-        width: "100%",
-        height: "100%",
-        boxSizing: "border-box",
-        display: "flex",
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: bgStyle,
-        padding: "44px 76px",
-        gap: "52px",
-        borderRadius: mode === "negative" ? "24px" : "0px",
+        width: "5px",
+        height: "236px",
+        backgroundColor: accentRuleColor,
+        borderRadius: "3px",
       },
-    },
-    h("img", {
-      src: symbolDataUrl,
-      width: 340,
-      height: 340,
-      style: { objectFit: "contain" },
-    }),
-    h(
+    });
+    textBlock = h(
+      "div",
+      {
+        style: {
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          maxWidth: "820px",
+        },
+      },
+      h(
+        "div",
+        {
+          style: {
+            fontFamily: "Manrope",
+            fontWeight: 800,
+            fontSize: mainWord.length > 12 ? "82px" : "104px",
+            color: titleColor,
+            letterSpacing: "-0.03em",
+            lineHeight: 0.96,
+          },
+        },
+        mainWord.toUpperCase()
+      ),
+      restWords
+        ? h(
+            "div",
+            {
+              style: {
+                fontFamily: "Outfit",
+                fontWeight: 700,
+                fontSize: "40px",
+                color: restColor,
+                letterSpacing: "0.16em",
+                marginTop: "12px",
+                lineHeight: 1.05,
+              },
+            },
+            restWords.toUpperCase()
+          )
+        : null,
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: "12px",
+            marginTop: "22px",
+          },
+        },
+        h("div", {
+          style: {
+            width: "28px",
+            height: "4px",
+            backgroundColor: accentRuleColor,
+          },
+        }),
+        h(
+          "div",
+          {
+            style: {
+              fontFamily: "Outfit",
+              fontWeight: 500,
+              fontSize: "21px",
+              letterSpacing: "0.14em",
+              color: subtitleColor,
+            },
+          },
+          subText
+        )
+      )
+    );
+  } else if (wordmarkStyle === "modern-monolith") {
+    gapPx = 42;
+    textBlock = h(
+      "div",
+      {
+        style: {
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          maxWidth: "840px",
+        },
+      },
+      h(
+        "div",
+        {
+          style: {
+            fontFamily: "Outfit",
+            fontWeight: 500,
+            fontSize: "20px",
+            letterSpacing: "0.24em",
+            color: restColor,
+            marginBottom: "8px",
+          },
+        },
+        (SECTORS[sector]?.rotulo || "IDENTIDADE").toUpperCase()
+      ),
+      h(
+        "div",
+        {
+          style: {
+            fontFamily: "Manrope",
+            fontWeight: 800,
+            fontSize: fullUpper.length > 16 ? "68px" : "80px",
+            color: titleColor,
+            letterSpacing: "-0.025em",
+            lineHeight: 1.02,
+          },
+        },
+        fullUpper
+      ),
+      h("div", {
+        style: {
+          width: "160px",
+          height: "6px",
+          backgroundColor: accentRuleColor,
+          marginTop: "18px",
+        },
+      }),
+      h(
+        "div",
+        {
+          style: {
+            fontFamily: "Outfit",
+            fontWeight: 400,
+            fontSize: "24px",
+            color: subtitleColor,
+            marginTop: "14px",
+          },
+        },
+        slogan || SECTORS[sector]?.rotulo || ""
+      )
+    );
+  } else if (wordmarkStyle === "editorial-serif") {
+    // Refinamento 1A Clássica: Separador vertical fino + Título serifado editorial majestoso (Fraunces 700)
+    gapPx = 38;
+    dividerNode = h("div", {
+      style: {
+        width: "2px",
+        height: "230px",
+        backgroundColor: accentRuleColor,
+      },
+    });
+    textBlock = h(
+      "div",
+      {
+        style: {
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          maxWidth: "820px",
+        },
+      },
+      h(
+        "div",
+        {
+          style: {
+            fontFamily: "Fraunces",
+            fontWeight: 700,
+            fontSize: nome.length > 16 ? "74px" : "88px",
+            color: titleColor,
+            letterSpacing: "-0.02em",
+            lineHeight: 1.04,
+          },
+        },
+        nome
+      ),
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: "14px",
+            marginTop: "20px",
+          },
+        },
+        h("div", {
+          style: {
+            width: "44px",
+            height: "3px",
+            backgroundColor: restColor,
+          },
+        }),
+        h(
+          "div",
+          {
+            style: {
+              fontFamily: "Outfit",
+              fontWeight: 500,
+              fontSize: "21px",
+              letterSpacing: "0.18em",
+              color: subtitleColor,
+            },
+          },
+          subText
+        )
+      )
+    );
+  } else if (wordmarkStyle === "crested-eyebrow") {
+    // Refinamento 1B Clássica: Etiqueta superior do sector + Bloco clássico Baskerville + Barra estrutural
+    gapPx = 44;
+    textBlock = h(
+      "div",
+      {
+        style: {
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          maxWidth: "840px",
+        },
+      },
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: "12px",
+            marginBottom: "10px",
+          },
+        },
+        h(
+          "div",
+          {
+            style: {
+              fontFamily: "Source Sans 3",
+              fontWeight: 700,
+              fontSize: "19px",
+              letterSpacing: "0.22em",
+              color: restColor,
+            },
+          },
+          (SECTORS[sector]?.rotulo || "MARCA").toUpperCase()
+        ),
+        h("div", {
+          style: {
+            width: "48px",
+            height: "3px",
+            backgroundColor: accentRuleColor,
+          },
+        })
+      ),
+      h(
+        "div",
+        {
+          style: {
+            fontFamily: "Libre Baskerville",
+            fontWeight: 700,
+            fontSize: mainWord.length > 12 ? "68px" : "82px",
+            color: titleColor,
+            letterSpacing: "0.02em",
+            lineHeight: 1.05,
+          },
+        },
+        mainWord.toUpperCase()
+      ),
+      restWords
+        ? h(
+            "div",
+            {
+              style: {
+                fontFamily: "Source Sans 3",
+                fontWeight: 600,
+                fontSize: "42px",
+                color: restColor,
+                letterSpacing: "0.1em",
+                marginTop: "6px",
+              },
+            },
+            restWords.toUpperCase()
+          )
+        : null,
+      h(
+        "div",
+        {
+          style: {
+            fontFamily: "Libre Baskerville",
+            fontWeight: 400,
+            fontSize: "21px",
+            color: subtitleColor,
+            marginTop: "14px",
+          },
+        },
+        slogan || SECTORS[sector]?.rotulo || ""
+      )
+    );
+  } else {
+    // Classic split (Direção I Base)
+    textBlock = h(
       "div",
       {
         style: {
@@ -553,7 +1286,7 @@ export async function composeVectorLogoSvg(params: {
           style: {
             fontFamily: pair.tituloFamily,
             fontWeight: pair.tituloWeight,
-            fontSize: mainWord.length > 12 ? "84px" : "104px",
+            fontSize: mainWord.length > 12 ? "82px" : "102px",
             color: titleColor,
             letterSpacing: "0.03em",
             lineHeight: 1.02,
@@ -568,7 +1301,7 @@ export async function composeVectorLogoSvg(params: {
               style: {
                 fontFamily: pair.textoFamily,
                 fontWeight: 400,
-                fontSize: "62px",
+                fontSize: "60px",
                 color: restColor,
                 marginTop: "6px",
                 lineHeight: 1.1,
@@ -579,11 +1312,11 @@ export async function composeVectorLogoSvg(params: {
         : null,
       h("div", {
         style: {
-          width: "220px",
+          width: "210px",
           height: "6px",
           backgroundColor: accentRuleColor,
           borderRadius: "3px",
-          marginTop: "22px",
+          marginTop: "20px",
         },
       }),
       h(
@@ -592,15 +1325,42 @@ export async function composeVectorLogoSvg(params: {
           style: {
             fontFamily: pair.tituloFamily,
             fontWeight: 400,
-            fontSize: "24px",
+            fontSize: "23px",
             letterSpacing: "0.16em",
             color: subtitleColor,
-            marginTop: "18px",
+            marginTop: "16px",
           },
         },
-        (slogan || SECTORS[sector]?.rotulo || "").toUpperCase().slice(0, 46)
+        subText
       )
-    )
+    );
+  }
+
+  const el = h(
+    "div",
+    {
+      style: {
+        width: "100%",
+        height: "100%",
+        boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: bgStyle,
+        padding: "28px 52px",
+        gap: `${gapPx}px`,
+        borderRadius: mode === "negative" ? "24px" : "0px",
+      },
+    },
+    h("img", {
+      src: symbolDataUrl,
+      width: 344,
+      height: 344,
+      style: { objectFit: "contain" },
+    }),
+    dividerNode,
+    textBlock
   );
 
   return satori(el, { width, height, fonts });
@@ -630,11 +1390,10 @@ export async function generateInitialDirections(
     sectorSpec.parSugerido === "moderna" || sectorSpec.parSugerido === "tecnica"
       ? "editorial"
       : sectorSpec.parSugerido;
-  const fontContemp: FontPairId =
-    sectorSpec.parSugerido === "moderna" ? "tecnica" : "moderna";
+  const fontContemp: FontPairId = "tecnica";
 
-  // Direction 1: Clássica & Arquitectónica
-  const simbolo1 = buildStudioSymbolSvg({
+  // Direção I: Clássica & Arquitectónica
+  const simbolo1 = await buildStudioSymbolSvg({
     sector: input.sector,
     directionId: "classica",
     symbolStyleVariant: 1,
@@ -654,6 +1413,7 @@ export async function generateInitialDirections(
     paleta: classicaPalette,
     symbolSvg: simbolo1,
     layout: "horizontal",
+    wordmarkStyle: "classic-split",
   });
 
   const dirClassica: StudioLogoOption = {
@@ -662,18 +1422,19 @@ export async function generateInitialDirections(
     round: 0,
     variantIndex: 1,
     titulo: "Direção I — Selo de Ofício & Tradição",
-    subtitulo: `Composição emblemática com par ${FONT_PAIRS[fontClassica].nome}`,
-    racional: `Símbolo arquitectónico desenhado à medida do sector (${sectorSpec.rotulo}), combinado com tipografia ${FONT_PAIRS[fontClassica].tituloFamily} + ${FONT_PAIRS[fontClassica].textoFamily} e paleta fiel às cores preferidas.`,
+    subtitulo: `Composição clássica emblemática com ${FONT_PAIRS[fontClassica].nome}`,
+    racional: `Emblema tradicional desenhado à medida do sector (${sectorSpec.rotulo}), sem molduras supérfluas, combinado com tipografia ${FONT_PAIRS[fontClassica].tituloFamily} + ${FONT_PAIRS[fontClassica].textoFamily}.`,
     fontPairId: fontClassica,
     paleta: classicaPalette,
     logoSvg: logoSvg1,
     simboloSvg: simbolo1,
     symbolStyleVariant: 1,
     lockupLayout: "left-emblem",
+    wordmarkStyle: "classic-split",
   };
 
-  // Direction 2: Contemporânea & Geométrica
-  const simbolo2 = buildStudioSymbolSvg({
+  // Direção II: Contemporânea Geométrica (Monograma das iniciais + portal aberto + sem-serifa forte)
+  const simbolo2 = await buildStudioSymbolSvg({
     sector: input.sector,
     directionId: "contemporanea",
     symbolStyleVariant: 2,
@@ -693,6 +1454,7 @@ export async function generateInitialDirections(
     paleta: contemporaneaPalette,
     symbolSvg: simbolo2,
     layout: "horizontal",
+    wordmarkStyle: "modern-geometric",
   });
 
   const dirContemporanea: StudioLogoOption = {
@@ -700,15 +1462,16 @@ export async function generateInitialDirections(
     directionId: "contemporanea",
     round: 0,
     variantIndex: 2,
-    titulo: "Direção II — Insígnia Geométrica Contemporânea",
-    subtitulo: `Síntese estrutural moderna com par ${FONT_PAIRS[fontContemp].nome}`,
-    racional: `Geometria contemporânea de alto contraste e leitura imediata em formatos reduzidos, apoiada pelo par tipográfico ${FONT_PAIRS[fontContemp].tituloFamily} + ${FONT_PAIRS[fontContemp].textoFamily}.`,
+    titulo: `Direção II — Monograma Geométrico ${firstInitial}${secondInitial}`,
+    subtitulo: "Portal moderno e sem-serifa geométrica de alto peso (Manrope + Outfit)",
+    racional: `Monograma arquitectónico ${firstInitial}${secondInitial} em espaço negativo limpo, divisor vertical e tipografia geométrica pesada sem serifas, criando uma alternativa nítida à Direção I.`,
     fontPairId: fontContemp,
     paleta: contemporaneaPalette,
     logoSvg: logoSvg2,
     simboloSvg: simbolo2,
     symbolStyleVariant: 2,
-    lockupLayout: "badge-framed",
+    lockupLayout: "editorial-split",
+    wordmarkStyle: "modern-geometric",
   };
 
   return {
@@ -722,7 +1485,6 @@ export async function generateRefinementRound(
   directionId: DirectionId,
   round: number
 ): Promise<[StudioLogoOption, StudioLogoOption]> {
-  // Strictly clamp round to 1..3 as specified in section 6.2
   const safeRound = Math.max(1, Math.min(3, Math.round(round)));
   const { firstInitial, secondInitial } = extractBrandTokens(input.nome);
   const { classicaPalette, contemporaneaPalette } =
@@ -733,20 +1495,51 @@ export async function generateRefinementRound(
 
   const fontChoices: Record<DirectionId, [FontPairId, FontPairId][]> = {
     classica: [
-      ["clara", "editorial"],
-      ["confianca", "clara"],
       ["editorial", "confianca"],
+      ["confianca", "clara"],
+      ["clara", "editorial"],
     ],
     contemporanea: [
       ["moderna", "tecnica"],
-      ["tecnica", "editorial"],
-      ["moderna", "clara"],
+      ["tecnica", "moderna"],
+      ["moderna", "tecnica"],
+    ],
+  };
+
+  const wordmarkChoices: Record<
+    DirectionId,
+    [WordmarkLockupStyle, WordmarkLockupStyle][]
+  > = {
+    classica: [
+      ["editorial-serif", "crested-eyebrow"],
+      ["crested-eyebrow", "classic-split"],
+      ["editorial-serif", "classic-split"],
+    ],
+    contemporanea: [
+      ["modern-monolith", "modern-geometric"],
+      ["modern-geometric", "modern-monolith"],
+      ["modern-monolith", "modern-geometric"],
+    ],
+  };
+
+  // Variantes de símbolo próprias (nunca repetindo a variante base 1 da Clássica nem 2 da Contemporânea na Ronda 1)
+  const symbolVariantMap: Record<DirectionId, [number, number][]> = {
+    classica: [
+      [2, 3],
+      [4, 5],
+      [6, 2],
+    ],
+    contemporanea: [
+      [1, 3],
+      [4, 5],
+      [6, 1],
     ],
   };
 
   const [fontA, fontB] = fontChoices[directionId][safeRound - 1];
+  const [wmA, wmB] = wordmarkChoices[directionId][safeRound - 1];
+  const [variantNumA, variantNumB] = symbolVariantMap[directionId][safeRound - 1];
 
-  // Option A of current round: Refined symbol framing + primary palette
   const palA = buildBrandPalette({
     primaria: basePalette.primaria.hex,
     secundaria: basePalette.secundaria.hex,
@@ -754,18 +1547,14 @@ export async function generateRefinementRound(
     tinta: basePalette.tinta.hex,
   });
 
-  // Option B of current round: Distinct chromatic accent & alternate symbol frame
   const palB = buildBrandPalette({
-    primaria: mixHex(basePalette.primaria.hex, basePalette.tinta.hex, 0.18),
+    primaria: mixHex(basePalette.primaria.hex, basePalette.tinta.hex, 0.24),
     secundaria: mixHex(basePalette.secundaria.hex, "#D97706", 0.35),
     papel: basePalette.papel.hex,
     tinta: basePalette.tinta.hex,
   });
 
-  const variantNumA = ((safeRound - 1) * 2 + 1) % 6 || 6;
-  const variantNumB = ((safeRound - 1) * 2 + 2) % 6 || 6;
-
-  const simboloA = buildStudioSymbolSvg({
+  const simboloA = await buildStudioSymbolSvg({
     sector: input.sector,
     directionId,
     symbolStyleVariant: variantNumA,
@@ -785,9 +1574,10 @@ export async function generateRefinementRound(
     paleta: palA,
     symbolSvg: simboloA,
     layout: "horizontal",
+    wordmarkStyle: wmA,
   });
 
-  const simboloB = buildStudioSymbolSvg({
+  const simboloB = await buildStudioSymbolSvg({
     sector: input.sector,
     directionId,
     symbolStyleVariant: variantNumB,
@@ -807,22 +1597,36 @@ export async function generateRefinementRound(
     paleta: palB,
     symbolSvg: simboloB,
     layout: "horizontal",
+    wordmarkStyle: wmB,
   });
+
+  const descA =
+    directionId === "classica"
+      ? `Afinação ${safeRound}.A — Traço Fino & Editorial Serif`
+      : `Afinação ${safeRound}.A — Linha Contínua Minimalista`;
+  const descB =
+    directionId === "classica"
+      ? `Afinação ${safeRound}.B — Selo Compacto & Eyebrow Clássico`
+      : `Afinação ${safeRound}.B — Monograma Monólito Dividido`;
 
   const optA: StudioLogoOption = {
     id: `ref_${directionId}_r${safeRound}_a`,
     directionId,
     round: safeRound,
     variantIndex: 1,
-    titulo: `Afinação ${safeRound}.A — Equilíbrio Estrutural`,
-    subtitulo: `Moldura de precisão com tipografia ${FONT_PAIRS[fontA].nome}`,
-    racional: `Ronda ${safeRound}/3: refina as proporções entre o símbolo e o nome com espaçamento óptico calibrado em ${FONT_PAIRS[fontA].tituloFamily}.`,
+    titulo: descA,
+    subtitulo:
+      directionId === "classica"
+        ? `Proporção esguia gravada + título serifado contínuo em Fraunces 700`
+        : `Símbolo contínuo em traço único + composição horizontal monolítica`,
+    racional: `Ronda ${safeRound}/3: altera simultaneamente proporção, espessura de traço do símbolo, família tipográfica (${FONT_PAIRS[fontA].tituloFamily}) e disposição do bloco.`,
     fontPairId: fontA,
     paleta: palA,
     logoSvg: logoSvgA,
     simboloSvg: simboloA,
     symbolStyleVariant: variantNumA,
-    lockupLayout: "left-emblem",
+    lockupLayout: "editorial-split",
+    wordmarkStyle: wmA,
   };
 
   const optB: StudioLogoOption = {
@@ -830,15 +1634,19 @@ export async function generateRefinementRound(
     directionId,
     round: safeRound,
     variantIndex: 2,
-    titulo: `Afinação ${safeRound}.B — Insígnia de Destaque`,
-    subtitulo: `Variação de emblema e acento com par ${FONT_PAIRS[fontB].nome}`,
-    racional: `Ronda ${safeRound}/3: acentua o carácter do símbolo com moldura distinta e contraste tipográfico em ${FONT_PAIRS[fontB].tituloFamily} + ${FONT_PAIRS[fontB].textoFamily}.`,
+    titulo: descB,
+    subtitulo:
+      directionId === "classica"
+        ? `Silhueta compacta tipo carimbo + etiqueta superior com Libre Baskerville`
+        : `Monograma com divisor vertical forte + bloco geométrico sem serifa`,
+    racional: `Ronda ${safeRound}/3: apresenta silhueta de alto contraste para pequenos formatos combinada com disposição hierárquica alternativa.`,
     fontPairId: fontB,
     paleta: palB,
     logoSvg: logoSvgB,
     simboloSvg: simboloB,
     symbolStyleVariant: variantNumB,
-    lockupLayout: "badge-framed",
+    lockupLayout: "stacked-crest",
+    wordmarkStyle: wmB,
   };
 
   return [optA, optB];
@@ -849,9 +1657,18 @@ export async function generateFinalVariantsA(
   chosen: StudioLogoOption
 ): Promise<FinalVariantsA> {
   const { firstInitial, secondInitial } = extractBrandTokens(input.nome);
+  const wmStyle: WordmarkLockupStyle =
+    chosen.wordmarkStyle ||
+    (chosen.directionId === "contemporanea"
+      ? "modern-geometric"
+      : chosen.symbolStyleVariant === 2
+      ? "editorial-serif"
+      : chosen.symbolStyleVariant === 3
+      ? "crested-eyebrow"
+      : "classic-split");
 
   const simboloColor = chosen.simboloSvg;
-  const simboloMono = buildStudioSymbolSvg({
+  const simboloMono = await buildStudioSymbolSvg({
     sector: input.sector,
     directionId: chosen.directionId,
     symbolStyleVariant: chosen.symbolStyleVariant,
@@ -864,16 +1681,41 @@ export async function generateFinalVariantsA(
     monochromeHex: "#141413",
   });
 
-  const simboloNeg = buildStudioSymbolSvg({
+  const primHsl = rgbToHsl(hexToRgb(chosen.paleta.primaria.hex));
+  const secHsl = rgbToHsl(hexToRgb(chosen.paleta.secundaria.hex));
+  const negPrim =
+    primHsl.l < 46
+      ? mixHex(chosen.paleta.primaria.hex, "#FFFFFF", 0.24)
+      : chosen.paleta.primaria.hex;
+  const negSec =
+    secHsl.l < 48
+      ? mixHex(chosen.paleta.secundaria.hex, "#FFFFFF", 0.22)
+      : chosen.paleta.secundaria.hex;
+
+  const simboloNeg = await buildStudioSymbolSvg({
     sector: input.sector,
     directionId: chosen.directionId,
     symbolStyleVariant: chosen.symbolStyleVariant,
     firstInitial,
     secondInitial,
-    primaryHex: chosen.paleta.secundaria.hex,
-    secondaryHex: chosen.paleta.primaria.hex,
+    primaryHex: negPrim,
+    secondaryHex: negSec,
     inkHex: "#FAF8F5",
     paperHex: chosen.paleta.tinta.hex,
+    isNegativeOnDark: true,
+  });
+
+  const simboloNegTransparente = await buildStudioSymbolSvg({
+    sector: input.sector,
+    directionId: chosen.directionId,
+    symbolStyleVariant: chosen.symbolStyleVariant,
+    firstInitial,
+    secondInitial,
+    primaryHex: chosen.paleta.primaria.hex,
+    secondaryHex: chosen.paleta.secundaria.hex,
+    inkHex: chosen.paleta.tinta.hex,
+    paperHex: chosen.paleta.papel.hex,
+    monochromeHex: "#FAF8F5",
   });
 
   const horizontalSvg = await composeVectorLogoSvg({
@@ -885,6 +1727,7 @@ export async function generateFinalVariantsA(
     symbolSvg: simboloColor,
     layout: "horizontal",
     mode: "color",
+    wordmarkStyle: wmStyle,
   });
 
   const verticalSvg = await composeVectorLogoSvg({
@@ -896,6 +1739,7 @@ export async function generateFinalVariantsA(
     symbolSvg: simboloColor,
     layout: "vertical",
     mode: "color",
+    wordmarkStyle: wmStyle,
   });
 
   const monocromaticoSvg = await composeVectorLogoSvg({
@@ -907,6 +1751,7 @@ export async function generateFinalVariantsA(
     symbolSvg: simboloMono,
     layout: "horizontal",
     mode: "monochrome",
+    wordmarkStyle: wmStyle,
   });
 
   const negativoSvg = await composeVectorLogoSvg({
@@ -918,6 +1763,19 @@ export async function generateFinalVariantsA(
     symbolSvg: simboloNeg,
     layout: "horizontal",
     mode: "negative",
+    wordmarkStyle: wmStyle,
+  });
+
+  const negativoTransparenteSvg = await composeVectorLogoSvg({
+    nome: input.nome,
+    slogan: input.slogan,
+    sector: input.sector,
+    fontPairId: chosen.fontPairId,
+    paleta: chosen.paleta,
+    symbolSvg: simboloNegTransparente,
+    layout: "horizontal",
+    mode: "negative-transparent",
+    wordmarkStyle: wmStyle,
   });
 
   return {
@@ -926,5 +1784,6 @@ export async function generateFinalVariantsA(
     simboloSvg: simboloColor,
     monocromaticoSvg,
     negativoSvg,
+    negativoTransparenteSvg,
   };
 }

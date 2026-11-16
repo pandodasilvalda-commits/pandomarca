@@ -32,6 +32,7 @@ export interface DraftMeta {
     simboloSvg: string;
     monocromaticoSvg: string;
     negativoSvg: string;
+    negativoTransparenteSvg?: string;
   };
 }
 

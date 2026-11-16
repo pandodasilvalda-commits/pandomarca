@@ -11,6 +11,7 @@ import {
   StyleGroupOverrides,
   StyleId,
 } from "@/lib/formats";
+import { Resvg } from "@resvg/resvg-js";
 import { buildBrandPalette } from "@/lib/palette";
 import { loadDraft } from "@/lib/storage";
 import { generateFullBrandKit } from "@/lib/generate/kit";
@@ -161,10 +162,24 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    let customWhiteLogoPng: Buffer | undefined;
+    if (loaded.meta.variantesEntradaA?.negativoTransparenteSvg) {
+      try {
+        const resvgWhite = new Resvg(
+          loaded.meta.variantesEntradaA.negativoTransparenteSvg,
+          { fitTo: { mode: "width", value: 1400 } }
+        );
+        customWhiteLogoPng = Buffer.from(resvgWhite.render().asPng());
+      } catch {
+        customWhiteLogoPng = undefined;
+      }
+    }
+
     const result = await generateFullBrandKit({
       draftId: loaded.meta.id,
       processedPng: loaded.processedPng,
       customIconPng: loaded.iconPng,
+      customWhiteLogoPng,
       isDarkMonochrome: loaded.meta.isDarkMonochrome,
       dados,
       paleta,

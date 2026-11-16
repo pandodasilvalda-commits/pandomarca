@@ -30,6 +30,7 @@ export interface GenerateKitInput {
   draftId?: string;
   processedPng: Buffer;
   customIconPng?: Buffer;
+  customWhiteLogoPng?: Buffer;
   isDarkMonochrome: boolean;
   dados: BrandData;
   paleta: BrandPalette;
@@ -176,6 +177,7 @@ export async function generateFullBrandKit(
     draftId = "direct",
     processedPng,
     customIconPng,
+    customWhiteLogoPng,
     isDarkMonochrome,
     dados,
     paleta,
@@ -210,6 +212,7 @@ export async function generateFullBrandKit(
 
   // 1. Variantes do logótipo (5 ficheiros)
   const whiteLogoPng = await createWhiteKnockoutLogo(processedPng, isDarkMonochrome);
+  const overlayWhiteLogoPng = customWhiteLogoPng || whiteLogoPng;
   const iconePng = await extractIconSquare(processedPng, customIconPng);
   const horizontalPng = await renderHorizontalVariant({
     processedPng,
@@ -284,7 +287,7 @@ export async function generateFullBrandKit(
       paleta,
       fontPairId,
       processedPng,
-      whiteLogoPng,
+      whiteLogoPng: overlayWhiteLogoPng,
       isDarkMonochrome,
       photoBuffer,
     });
@@ -298,7 +301,7 @@ export async function generateFullBrandKit(
     paleta,
     fontPairId,
     processedPng,
-    whiteLogoPng,
+    whiteLogoPng: overlayWhiteLogoPng,
     isDarkMonochrome,
     photoBuffer,
   });
@@ -310,7 +313,7 @@ export async function generateFullBrandKit(
     paleta,
     fontPairId,
     processedPng,
-    whiteLogoPng,
+    whiteLogoPng: overlayWhiteLogoPng,
     isDarkMonochrome,
     photoBuffer,
   });
@@ -388,7 +391,7 @@ export async function generateFullBrandKit(
     paleta,
     fontPairId,
     processedPng,
-    whiteLogoPng,
+    whiteLogoPng: overlayWhiteLogoPng,
     isDarkMonochrome,
     photoBuffer,
   });
@@ -401,7 +404,7 @@ export async function generateFullBrandKit(
     paleta,
     fontPairId,
     processedPng,
-    whiteLogoPng,
+    whiteLogoPng: overlayWhiteLogoPng,
     isDarkMonochrome,
     photoBuffer,
   });
