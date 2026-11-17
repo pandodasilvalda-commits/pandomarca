@@ -94,6 +94,7 @@ export function buildLogoVisualDna(params: {
       paletaDescricao: formatPaletteDescription(paletaHex),
       paletaHex,
       fixtureLogoOrigem: params.fixtureLogoOrigem || "docs/referencias/ia-aprovada/logo.jpg",
+      isDarkMonochrome: Boolean(params.isDarkMonochrome),
     };
   }
 
@@ -112,6 +113,7 @@ export function buildLogoVisualDna(params: {
       paletaDescricao: formatPaletteDescription(paletaHex),
       paletaHex,
       fixtureLogoOrigem: params.fixtureLogoOrigem || "docs/referencias/ia-aprovada/capa-moderna.jpg",
+      isDarkMonochrome: Boolean(params.isDarkMonochrome),
     };
   }
 
@@ -145,5 +147,6 @@ export function buildLogoVisualDna(params: {
     paletaDescricao: formatPaletteDescription(paletaHex),
     paletaHex,
     fixtureLogoOrigem: params.fixtureLogoOrigem,
+    isDarkMonochrome: Boolean(params.isDarkMonochrome),
   };
 }

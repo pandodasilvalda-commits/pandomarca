@@ -314,7 +314,7 @@ export async function generateFullBrandKit(
   // 1. Variantes do logótipo (5 ficheiros)
   const overlayWhiteLogoPng =
     customWhiteLogoPng ||
-    (await createWhiteKnockoutLogo(processedPng, isDarkMonochrome));
+    (await createWhiteKnockoutLogo(processedPng, isDarkMonochrome, paleta.tinta.hex));
   const iconePng = await extractIconSquare(processedPng, customIconPng);
   const horizontalPng = await renderHorizontalVariant({
     processedPng,
@@ -328,7 +328,7 @@ export async function generateFullBrandKit(
     logoPng: processedPng,
     size: 1200,
     bgHex: paleta.papel.hex,
-    paddingRatio: 0.16,
+    paddingRatio: 0.10,
     opaque: true,
   });
 
@@ -336,7 +336,7 @@ export async function generateFullBrandKit(
     logoPng: overlayWhiteLogoPng,
     size: 1200,
     bgHex: paleta.tinta.hex,
-    paddingRatio: 0.16,
+    paddingRatio: 0.10,
     opaque: true,
   });
 
@@ -363,6 +363,7 @@ export async function generateFullBrandKit(
       processedPng,
       logoDna,
       style: groupStyle,
+      fontPairId,
       sessaoId,
     });
 
@@ -629,6 +630,7 @@ export async function regenerarPecaDoKit(params: {
     style: rede.styleGroup
       ? kitMeta.styleOverrides[rede.styleGroup]
       : kitMeta.kitStyle,
+    fontPairId: kitMeta.fontPairId,
     sessaoId:
       loadedDraft.status === "ok" ? loadedDraft.meta.sessaoImagemId : undefined,
     bypassCache: true,

@@ -1,5 +1,8 @@
 import fs from "fs";
 import path from "path";
+import React from "react";
+import satori from "satori";
+import { Resvg } from "@resvg/resvg-js";
 import sharp, { type OverlayOptions } from "sharp";
 import {
   getRedeSocialConfig,
@@ -7,7 +10,9 @@ import {
   type RedeSocialConfig,
   type RedeSocialId,
 } from "../config/redes-sociais";
+import { getSatoriFontsForPair } from "../fonts";
 import { buildBrandPalette, hexToRgb, mixHex } from "../palette";
+import { adaptLogoForDarkSurface } from "../logo-surface";
 import { vetorizarImagemLocal } from "../vetorizar";
 import {
   ImagemContexto,
@@ -452,6 +457,76 @@ async function generateLogoFromApprovedRefs(
   };
 }
 
+async function measureOpaqueStats(pngBuf: Buffer): Promise<{
+  meanLum: number;
+  brightFraction: number;
+  darkFraction: number;
+}> {
+  const { data, info } = await sharp(pngBuf)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const w = info.width;
+  const h = info.height;
+  const step = Math.max(1, Math.floor(Math.sqrt((w * h) / 4000)));
+  let count = 0;
+  let lumSum = 0;
+  let brightCount = 0;
+  let darkCount = 0;
+  for (let y = 0; y < h; y += step) {
+    for (let x = 0; x < w; x += step) {
+      const idx = (y * w + x) * 4;
+      if (data[idx + 3] < 80) continue;
+      const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+      count++;
+      lumSum += lum;
+      if (lum > 170) brightCount++;
+      if (lum < 65) darkCount++;
+    }
+  }
+  if (count === 0) return { meanLum: 128, brightFraction: 0.5, darkFraction: 0.5 };
+  return {
+    meanLum: lumSum / count,
+    brightFraction: brightCount / count,
+    darkFraction: darkCount / count,
+  };
+}
+
+async function buildCenteredStudioHaloBg(
+  target: number,
+  outerRgb: { r: number; g: number; b: number },
+  innerRgb: { r: number; g: number; b: number }
+): Promise<Buffer> {
+  const dim = Math.max(64, Math.min(200, Math.round(target / 2)));
+  const raw = Buffer.alloc(dim * dim * 4);
+  const half = (dim - 1) / 2;
+  const rInner = 0.27;
+  const rOuter = 0.445;
+  for (let y = 0; y < dim; y++) {
+    const dy = (y - half) / dim;
+    for (let x = 0; x < dim; x++) {
+      const dx = (x - half) / dim;
+      const r = Math.hypot(dx, dy);
+      let t = 1;
+      if (r <= rInner) {
+        t = 0;
+      } else if (r < rOuter) {
+        const u = (r - rInner) / (rOuter - rInner);
+        t = u * u * (3 - 2 * u);
+      }
+      const idx = (y * dim + x) * 4;
+      raw[idx] = Math.round(innerRgb.r * (1 - t) + outerRgb.r * t);
+      raw[idx + 1] = Math.round(innerRgb.g * (1 - t) + outerRgb.g * t);
+      raw[idx + 2] = Math.round(innerRgb.b * (1 - t) + outerRgb.b * t);
+      raw[idx + 3] = 255;
+    }
+  }
+  return sharp(raw, { raw: { width: dim, height: dim, channels: 4 } })
+    .resize(target, target, { kernel: sharp.kernel.cubic })
+    .png()
+    .toBuffer();
+}
+
 /**
  * Gera uma foto de perfil 1:1 (avatar) extraída diretamente do emblema da referência de logótipo,
  * centrada com margem circular generosa para leitura perfeita a 40×40 px.
@@ -469,7 +544,6 @@ async function generateAvatarFromEmblemRef(
     !isDefaultFornoBrand(contexto?.nome) &&
     !(await isImageMostlySameAsRef(refBuf, "logo.jpg"));
 
-  // Cor de fundo coerente e opaca com alto contraste para 40 px
   let bgHex =
     estiloVisual === "moderno"
       ? contexto?.paleta?.tinta.hex || "#25120B"
@@ -480,42 +554,118 @@ async function generateAvatarFromEmblemRef(
       : "docs/referencias/ia-aprovada/logo.jpg";
 
   let emblemCrop: Buffer;
+  let customHaloInnerRgb: { r: number; g: number; b: number } | null = null;
 
   if (isCustomRef && refBuf) {
     fixtureNome = "referencia-cliente";
-    const meta = await sharp(refBuf).metadata();
-    const rw = meta.width || 400;
-    const rh = meta.height || 400;
-    const rawTrim = await sharp(refBuf).ensureAlpha().toBuffer();
+    const cleaned = await removeUniformMarginFloodFill(refBuf);
+    let rawTrim = cleaned;
+    try {
+      rawTrim = await sharp(cleaned).ensureAlpha().trim({ threshold: 8 }).png().toBuffer();
+    } catch {
+      rawTrim = cleaned;
+    }
 
-    // Se o logótipo for empilhado (alto) extrai a metade superior (zona do emblema);
-    // se for horizontal extrai o lado esquerdo provável do símbolo
-    if (rh >= rw * 0.9 && rh > 220) {
-      emblemCrop = await sharp(rawTrim)
-        .extract({
-          left: Math.round(rw * 0.08),
-          top: Math.round(rh * 0.05),
-          width: Math.max(40, Math.round(rw * 0.84)),
-          height: Math.max(40, Math.round(rh * 0.48)),
-        })
+    const { data: tData, info: tInfo } = await sharp(rawTrim)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const rw = tInfo.width || 400;
+    const rh = tInfo.height || 400;
+
+    if (rw > rh * 1.35) {
+      let splitX = Math.min(rw, Math.round(rh * 1.05));
+      const minSearchX = Math.round(rw * 0.16);
+      const maxSearchX = Math.min(rw - 8, Math.round(rw * 0.65));
+      let seenOpaqueLeft = false;
+      let gapStart = -1;
+      for (let x = minSearchX; x <= maxSearchX; x++) {
+        let colOpaque = 0;
+        for (let y = 0; y < rh; y++) {
+          if (tData[(y * rw + x) * 4 + 3] > 24) colOpaque++;
+        }
+        if (colOpaque > 1) {
+          seenOpaqueLeft = true;
+          if (gapStart >= 0) {
+            splitX = Math.round((gapStart + x) / 2);
+            break;
+          }
+        } else if (seenOpaqueLeft && gapStart < 0) {
+          gapStart = x;
+        }
+      }
+      if (gapStart >= 0 && splitX === Math.min(rw, Math.round(rh * 1.05))) {
+        splitX = gapStart;
+      }
+      const extracted = await sharp(rawTrim)
+        .extract({ left: 0, top: 0, width: Math.max(24, splitX), height: rh })
         .png()
         .toBuffer();
-    } else if (rw > rh * 1.55) {
-      emblemCrop = await sharp(rawTrim)
-        .extract({
-          left: Math.round(rw * 0.02),
-          top: Math.round(rh * 0.04),
-          width: Math.max(40, Math.round(rw * 0.44)),
-          height: Math.max(40, Math.round(rh * 0.92)),
-        })
+      try {
+        emblemCrop = await sharp(extracted).ensureAlpha().trim({ threshold: 8 }).png().toBuffer();
+      } catch {
+        emblemCrop = extracted;
+      }
+    } else if (rh >= rw * 0.9 && rh > 120) {
+      let splitY = -1;
+      const minSearchY = Math.round(rh * 0.24);
+      const maxSearchY = Math.min(rh - 12, Math.round(rh * 0.68));
+      let seenOpaqueTop = false;
+      let gapStart = -1;
+      for (let y = minSearchY; y <= maxSearchY; y++) {
+        let rowOpaque = 0;
+        for (let x = Math.round(rw * 0.08); x < Math.round(rw * 0.92); x += 2) {
+          if (tData[(y * rw + x) * 4 + 3] > 28) rowOpaque++;
+        }
+        if (rowOpaque > 3) {
+          seenOpaqueTop = true;
+          if (gapStart >= 0) {
+            splitY = Math.round((gapStart + y) / 2);
+            break;
+          }
+        } else if (seenOpaqueTop && gapStart < 0) {
+          gapStart = y;
+        }
+      }
+      if (gapStart >= 0 && splitY < 0) splitY = gapStart;
+      const finalSplitY = splitY > 24 ? splitY : Math.max(36, Math.round(rh * 0.55));
+      const extracted = await sharp(rawTrim)
+        .extract({ left: 0, top: 0, width: rw, height: finalSplitY })
         .png()
         .toBuffer();
+      try {
+        emblemCrop = await sharp(extracted).ensureAlpha().trim({ threshold: 8 }).png().toBuffer();
+      } catch {
+        emblemCrop = extracted;
+      }
     } else {
       emblemCrop = rawTrim;
     }
 
-    emblemCrop = await removeUniformMarginFloodFill(emblemCrop);
-    bgHex = estiloVisual === "moderno" ? "#1E1A17" : "#FAF7F2";
+    const stats = await measureOpaqueStats(emblemCrop);
+    const pal = contexto?.paleta;
+    const darkSurfaceHex = pal
+      ? mixHex(pal.tinta.hex, pal.secundaria.hex, 0.35)
+      : "#16253A";
+    const lightSurfaceHex = pal ? pal.papel.hex : "#F6F7F9";
+
+    if (estiloVisual === "moderno") {
+      if (stats.meanLum < 60 && stats.brightFraction < 0.2) {
+        bgHex = lightSurfaceHex;
+      } else {
+        bgHex = darkSurfaceHex;
+        if (stats.darkFraction >= 0.14 && stats.meanLum < 185) {
+          customHaloInnerRgb = hexToRgb(mixHex(lightSurfaceHex, "#FFFFFF", 0.72));
+        }
+      }
+    } else {
+      if (stats.meanLum > 205 && stats.brightFraction > 0.72) {
+        bgHex = darkSurfaceHex;
+      } else {
+        bgHex = mixHex(lightSurfaceHex, pal?.primaria.hex || "#0078FC", 0.22);
+        customHaloInnerRgb = { r: 255, g: 255, b: 255 };
+      }
+    }
   } else if (estiloVisual === "moderno") {
     const capMod = loadApprovedRef("capa-moderna.jpg");
     // Extrai o emblema centrado exatamente em x=334 (x 112..556, y 24..298) e suaviza as bordas
@@ -552,8 +702,8 @@ async function generateAvatarFromEmblemRef(
   }
 
   const bgRgb = hexToRgb(bgHex);
-  // 64% no emblema centrado preserva ampla margem nos cantos fora do círculo e leitura clara a 40 px
-  const innerSize = Math.max(64, Math.round(target * 0.64));
+  const innerRatio = isCustomRef ? (rede.isCircle ? 0.62 : 0.66) : 0.64;
+  const innerSize = Math.max(48, Math.round(target * innerRatio));
   const scaledEmblem = await sharp(emblemCrop)
     .resize(innerSize, innerSize, {
       fit: "contain",
@@ -561,6 +711,16 @@ async function generateAvatarFromEmblemRef(
     })
     .png()
     .toBuffer();
+
+  if (customHaloInnerRgb) {
+    const haloBg = await buildCenteredStudioHaloBg(target, bgRgb, customHaloInnerRgb);
+    const finalBuf = await sharp(haloBg)
+      .composite([{ input: scaledEmblem, gravity: "center" }])
+      .flatten({ background: bgRgb })
+      .png()
+      .toBuffer();
+    return { buffer: finalBuf, fixtureNome };
+  }
 
   const finalBuf = await sharp({
     create: {
@@ -973,8 +1133,8 @@ function getFornoExtractedParts(estiloVisual: "moderno" | "classico"): Promise<E
 
 /**
  * Prepara partes limpas para uma marca personalizada (Entrada B ou outro nome),
- * separando emblema + palavra se o logótipo for empilhado, sem nunca desenhar
- * texto da marca-exemplo Forno da Vilariça por trás.
+ * preservando integralmente o logótipo enviado sem redesenho e sem misturar
+ * elementos de outras marcas de amostra.
  */
 async function extractCustomClientParts(
   refBuf: Buffer
@@ -1006,7 +1166,7 @@ async function extractCustomClientParts(
       }
     }
   }
-  const pad = 10;
+  const pad = 4;
   const left = Math.max(0, minX - pad);
   const top = Math.max(0, minY - pad);
   const cropW = Math.max(24, Math.min(w - left, maxX - minX + 1 + pad * 2));
@@ -1017,7 +1177,7 @@ async function extractCustomClientParts(
       ? await sharp(clean).extract({ left, top, width: cropW, height: cropH }).png().toBuffer()
       : clean;
 
-  // Tenta localizar uma banda horizontal limpa entre 35% e 68% para compor em linha nas faixas
+  // Para logótipos empilhados verticais, separa banda horizontal limpa entre 35% e 68%
   let splitRow = -1;
   if (cropH >= cropW * 0.72 && cropH > 120) {
     const tInfo = await sharp(trimmed).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -1065,6 +1225,383 @@ async function extractCustomClientParts(
   };
 }
 
+function mixRgbChannels(
+  a: { r: number; g: number; b: number },
+  b: { r: number; g: number; b: number },
+  t: number
+): { r: number; g: number; b: number } {
+  const k = Math.max(0, Math.min(1, t));
+  return {
+    r: Math.round(a.r + (b.r - a.r) * k),
+    g: Math.round(a.g + (b.g - a.g) * k),
+    b: Math.round(a.b + (b.b - a.b) * k),
+  };
+}
+
+async function createMascotBacklightGlow(
+  diameter: number,
+  glowRgb: { r: number; g: number; b: number },
+  peakOpacity = 0.34
+): Promise<Buffer> {
+  const dim = Math.max(48, Math.min(220, Math.round(diameter / 3)));
+  const raw = Buffer.alloc(dim * dim * 4);
+  const half = (dim - 1) / 2;
+  const edgeExp = Math.exp(-3.8);
+  for (let y = 0; y < dim; y++) {
+    const dy = (y - half) / Math.max(1, half);
+    for (let x = 0; x < dim; x++) {
+      const dx = (x - half) / Math.max(1, half);
+      const r2 = dx * dx + dy * dy;
+      let a = 0;
+      if (r2 < 0.96) {
+        const g = (Math.exp(-3.8 * r2) - edgeExp) / (1 - edgeExp);
+        a = Math.max(0, Math.min(1, g)) * peakOpacity;
+      }
+      const idx = (y * dim + x) * 4;
+      raw[idx] = glowRgb.r;
+      raw[idx + 1] = glowRgb.g;
+      raw[idx + 2] = glowRgb.b;
+      raw[idx + 3] = Math.round(255 * a);
+    }
+  }
+  return sharp(raw, { raw: { width: dim, height: dim, channels: 4 } })
+    .resize(diameter, diameter, { kernel: sharp.kernel.cubic })
+    .png()
+    .toBuffer();
+}
+
+/**
+ * Sintetiza o fundo atmosférico de Camada (a) estritamente a partir da paleta extraída
+ * da marca cliente, com zonas de luz arquitectónicas e planos translúcidos que sangram
+ * até às bordas exteriores da capa/publicação mantendo leitura limpa na zona segura.
+ */
+async function buildCustomBrandAmbientBackdrop(opts: {
+  W: number;
+  H: number;
+  estiloVisual: "moderno" | "classico";
+  disposicao: RedeSocialConfig["composicao"]["disposicao"];
+  redeId: RedeSocialId;
+  paleta: ReturnType<typeof buildBrandPalette>;
+}): Promise<{ buffer: Buffer; canvasBgRgb: { r: number; g: number; b: number } }> {
+  const { W, H, estiloVisual, disposicao, redeId, paleta } = opts;
+
+  const cPrim = hexToRgb(paleta.primaria.hex);
+  const cSec = hexToRgb(paleta.secundaria.hex);
+  const cPapel = hexToRgb(paleta.papel.hex);
+
+  const darkHexPre = mixHex(paleta.tinta.hex, paleta.secundaria.hex, 0.42);
+  const darkPreRgb = hexToRgb(darkHexPre);
+  const darkPreLum = 0.299 * darkPreRgb.r + 0.587 * darkPreRgb.g + 0.114 * darkPreRgb.b;
+  const darkBaseRgb =
+    darkPreLum > 92 ? mixRgbChannels(darkPreRgb, { r: 15, g: 23, b: 42 }, 0.6) : darkPreRgb;
+  const lightBaseRgb = cPapel;
+
+  const canvasBgRgb = estiloVisual === "moderno" ? darkBaseRgb : lightBaseRgb;
+
+  const scaleW = Math.min(420, Math.max(180, Math.round(W / 4)));
+  const scaleH = Math.max(60, Math.round((H * scaleW) / Math.max(1, W)));
+  const raw = Buffer.alloc(scaleW * scaleH * 4);
+
+  interface GlowSpot {
+    u: number;
+    v: number;
+    rx: number;
+    ry: number;
+    rgb: { r: number; g: number; b: number };
+    strength: number;
+  }
+
+  const spots: GlowSpot[] = [];
+  const brightAccent = mixRgbChannels(cPrim, { r: 255, g: 255, b: 255 }, 0.36);
+  const softIce = mixRgbChannels(cPrim, { r: 255, g: 255, b: 255 }, 0.64);
+  const deepAccent = mixRgbChannels(cSec, cPrim, 0.38);
+
+  if (estiloVisual === "moderno") {
+    if (disposicao === "horizontal-bipartida") {
+      spots.push(
+        { u: 0.78, v: 0.44, rx: 0.30, ry: 0.60, rgb: cPrim, strength: 0.76 },
+        { u: 0.89, v: 0.28, rx: 0.20, ry: 0.40, rgb: brightAccent, strength: 0.48 },
+        { u: 0.74, v: 0.58, rx: 0.14, ry: 0.28, rgb: softIce, strength: 0.24 },
+        { u: 0.93, v: 0.84, rx: 0.28, ry: 0.48, rgb: deepAccent, strength: 0.56 },
+        { u: 0.08, v: 0.18, rx: 0.16, ry: 0.36, rgb: cPrim, strength: 0.28 }
+      );
+    } else if (redeId === "yt-banner") {
+      spots.push(
+        { u: 0.08, v: 0.50, rx: 0.22, ry: 0.48, rgb: cPrim, strength: 0.72 },
+        { u: 0.92, v: 0.50, rx: 0.22, ry: 0.48, rgb: cPrim, strength: 0.72 },
+        { u: 0.12, v: 0.34, rx: 0.14, ry: 0.26, rgb: brightAccent, strength: 0.36 },
+        { u: 0.88, v: 0.66, rx: 0.14, ry: 0.26, rgb: brightAccent, strength: 0.36 },
+        { u: 0.50, v: 0.14, rx: 0.46, ry: 0.24, rgb: deepAccent, strength: 0.58 },
+        { u: 0.50, v: 0.86, rx: 0.46, ry: 0.24, rgb: deepAccent, strength: 0.58 }
+      );
+    } else if (disposicao === "faixa-ultra-larga") {
+      spots.push(
+        { u: 0.90, v: 0.46, rx: 0.22, ry: 0.72, rgb: cPrim, strength: 0.76 },
+        { u: 0.95, v: 0.24, rx: 0.15, ry: 0.46, rgb: brightAccent, strength: 0.44 },
+        { u: 0.06, v: 0.25, rx: 0.14, ry: 0.55, rgb: cPrim, strength: 0.28 }
+      );
+    } else if (disposicao === "imagem-destaque-min-texto") {
+      spots.push(
+        { u: 0.73, v: 0.46, rx: 0.36, ry: 0.64, rgb: cPrim, strength: 0.82 },
+        { u: 0.86, v: 0.28, rx: 0.22, ry: 0.42, rgb: brightAccent, strength: 0.54 },
+        { u: 0.71, v: 0.50, rx: 0.14, ry: 0.26, rgb: softIce, strength: 0.32 },
+        { u: 0.62, v: 0.84, rx: 0.30, ry: 0.44, rgb: deepAccent, strength: 0.56 }
+      );
+    } else if (disposicao === "vertical-story") {
+      spots.push(
+        { u: 0.54, v: 0.21, rx: 0.48, ry: 0.21, rgb: cPrim, strength: 0.72 },
+        { u: 0.76, v: 0.13, rx: 0.34, ry: 0.14, rgb: brightAccent, strength: 0.40 },
+        { u: 0.46, v: 0.88, rx: 0.46, ry: 0.17, rgb: deepAccent, strength: 0.52 }
+      );
+    } else {
+      spots.push(
+        { u: 0.50, v: 0.16, rx: 0.48, ry: 0.26, rgb: cPrim, strength: 0.70 },
+        { u: 0.82, v: 0.22, rx: 0.32, ry: 0.22, rgb: brightAccent, strength: 0.44 },
+        { u: 0.18, v: 0.88, rx: 0.36, ry: 0.22, rgb: deepAccent, strength: 0.44 }
+      );
+    }
+  } else {
+    const softBlueWash = mixRgbChannels(cPapel, cPrim, 0.22);
+    const softNavyWash = mixRgbChannels(cPapel, cSec, 0.12);
+    if (disposicao === "horizontal-bipartida") {
+      spots.push(
+        { u: 0.82, v: 0.46, rx: 0.34, ry: 0.66, rgb: softBlueWash, strength: 0.90 },
+        { u: 0.94, v: 0.80, rx: 0.26, ry: 0.45, rgb: softNavyWash, strength: 0.68 },
+        { u: 0.08, v: 0.16, rx: 0.16, ry: 0.34, rgb: softBlueWash, strength: 0.55 }
+      );
+    } else if (redeId === "yt-banner") {
+      spots.push(
+        { u: 0.08, v: 0.50, rx: 0.22, ry: 0.48, rgb: softBlueWash, strength: 0.86 },
+        { u: 0.92, v: 0.50, rx: 0.22, ry: 0.48, rgb: softBlueWash, strength: 0.86 },
+        { u: 0.50, v: 0.12, rx: 0.46, ry: 0.20, rgb: softNavyWash, strength: 0.62 },
+        { u: 0.50, v: 0.88, rx: 0.46, ry: 0.20, rgb: softNavyWash, strength: 0.62 }
+      );
+    } else if (disposicao === "faixa-ultra-larga") {
+      spots.push(
+        { u: 0.90, v: 0.48, rx: 0.24, ry: 0.72, rgb: softBlueWash, strength: 0.90 },
+        { u: 0.08, v: 0.28, rx: 0.14, ry: 0.55, rgb: softNavyWash, strength: 0.58 }
+      );
+    } else if (disposicao === "imagem-destaque-min-texto") {
+      spots.push(
+        { u: 0.76, v: 0.48, rx: 0.36, ry: 0.68, rgb: softBlueWash, strength: 0.94 },
+        { u: 0.90, v: 0.24, rx: 0.24, ry: 0.44, rgb: softNavyWash, strength: 0.64 }
+      );
+    } else if (disposicao === "vertical-story") {
+      spots.push(
+        { u: 0.52, v: 0.20, rx: 0.48, ry: 0.22, rgb: softBlueWash, strength: 0.86 },
+        { u: 0.50, v: 0.88, rx: 0.48, ry: 0.16, rgb: softNavyWash, strength: 0.68 }
+      );
+    } else {
+      spots.push(
+        { u: 0.52, v: 0.18, rx: 0.50, ry: 0.26, rgb: softBlueWash, strength: 0.86 },
+        { u: 0.82, v: 0.86, rx: 0.38, ry: 0.24, rgb: softNavyWash, strength: 0.64 }
+      );
+    }
+  }
+
+  for (let y = 0; y < scaleH; y++) {
+    const v = scaleH > 1 ? y / (scaleH - 1) : 0.5;
+    for (let x = 0; x < scaleW; x++) {
+      const u = scaleW > 1 ? x / (scaleW - 1) : 0.5;
+      let r = canvasBgRgb.r;
+      let g = canvasBgRgb.g;
+      let b = canvasBgRgb.b;
+
+      if (estiloVisual === "moderno") {
+        const sweep = Math.max(0, Math.min(1, 0.55 * u + 0.35 * (1 - v)));
+        const secShift = mixRgbChannels(darkBaseRgb, cSec, 0.42);
+        const baseSw = mixRgbChannels(darkBaseRgb, secShift, sweep * 0.65);
+        r = baseSw.r;
+        g = baseSw.g;
+        b = baseSw.b;
+      }
+
+      for (const s of spots) {
+        const dx = (u - s.u) / Math.max(0.02, s.rx);
+        const dy = (v - s.v) / Math.max(0.02, s.ry);
+        const d2 = dx * dx + dy * dy;
+        if (d2 > 3.6) continue;
+        const w = Math.exp(-d2 * 1.45) * s.strength;
+        r = Math.round(r * (1 - w) + s.rgb.r * w);
+        g = Math.round(g * (1 - w) + s.rgb.g * w);
+        b = Math.round(b * (1 - w) + s.rgb.b * w);
+      }
+
+      // Planos diagonais luminosos suaves (sem saltos abruptos) para profundeza arquitetónica/tecnológica
+      if (
+        disposicao === "horizontal-bipartida" ||
+        disposicao === "imagem-destaque-min-texto"
+      ) {
+        const beamPivot = disposicao === "imagem-destaque-min-texto" ? 0.62 : 0.72;
+        const dBeam = Math.abs((u - beamPivot) * 0.85 + (v - 0.5) * 0.42);
+        const beamW = Math.exp(-(dBeam * dBeam) / 0.018) * (estiloVisual === "moderno" ? 0.16 : 0.10);
+        const beamTint = estiloVisual === "moderno" ? brightAccent : cPrim;
+        r = Math.round(r * (1 - beamW) + beamTint.r * beamW);
+        g = Math.round(g * (1 - beamW) + beamTint.g * beamW);
+        b = Math.round(b * (1 - beamW) + beamTint.b * beamW);
+      } else if (redeId === "yt-banner") {
+        const ribbonDist = Math.abs(v - 0.5);
+        const edgeBand = ribbonDist > 0.17 && ribbonDist < 0.23
+          ? Math.exp(-Math.pow((ribbonDist - 0.20) / 0.024, 2)) * (estiloVisual === "moderno" ? 0.14 : 0.08)
+          : 0;
+        if (edgeBand > 0) {
+          const bandTint = estiloVisual === "moderno" ? brightAccent : cPrim;
+          r = Math.round(r * (1 - edgeBand) + bandTint.r * edgeBand);
+          g = Math.round(g * (1 - edgeBand) + bandTint.g * edgeBand);
+          b = Math.round(b * (1 - edgeBand) + bandTint.b * edgeBand);
+        }
+      }
+
+      // Ondulação luminosa orgânica muito suave na Camada (a) para textura de estúdio
+      const wave = Math.sin(u * 4.2 + v * 2.6) * 0.5 + 0.5;
+      const waveWeight = estiloVisual === "moderno" ? 0.045 : 0.025;
+      const targetTone = estiloVisual === "moderno" ? cPrim : cSec;
+      r = Math.max(0, Math.min(255, Math.round(r * (1 - wave * waveWeight) + targetTone.r * wave * waveWeight)));
+      g = Math.max(0, Math.min(255, Math.round(g * (1 - wave * waveWeight) + targetTone.g * wave * waveWeight)));
+      b = Math.max(0, Math.min(255, Math.round(b * (1 - wave * waveWeight) + targetTone.b * wave * waveWeight)));
+
+      const idx = (y * scaleW + x) * 4;
+      raw[idx] = r;
+      raw[idx + 1] = g;
+      raw[idx + 2] = b;
+      raw[idx + 3] = 255;
+    }
+  }
+
+  const buffer = await sharp(raw, { raw: { width: scaleW, height: scaleH, channels: 4 } })
+    .resize(W, H, { kernel: sharp.kernel.cubic })
+    .png()
+    .toBuffer();
+
+  return { buffer, canvasBgRgb };
+}
+
+async function createRoundedLogoPlate(opts: {
+  fittedLogo: Buffer;
+  logoW: number;
+  logoH: number;
+  plateBgHex: string;
+  accentHex: string;
+  borderHex: string;
+}): Promise<{ buffer: Buffer; width: number; height: number }> {
+  const padX = Math.max(22, Math.min(36, Math.round(opts.logoW * 0.055)));
+  const padY = Math.max(14, Math.min(28, Math.round(opts.logoH * 0.14)));
+  const plateW = opts.logoW + padX * 2;
+  const plateH = opts.logoH + padY * 2;
+  const rx = Math.max(10, Math.min(24, Math.round(Math.min(plateW, plateH) * 0.11)));
+
+  const plateSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${plateW}" height="${plateH}" viewBox="0 0 ${plateW} ${plateH}">
+    <defs>
+      <clipPath id="plateClip">
+        <rect x="1" y="1" width="${plateW - 2}" height="${plateH - 2}" rx="${rx}" />
+      </clipPath>
+    </defs>
+    <g clip-path="url(#plateClip)">
+      <rect x="1" y="1" width="${plateW - 2}" height="${plateH - 2}" rx="${rx}" fill="${opts.plateBgHex}" />
+      <rect x="10" y="${Math.round(plateH * 0.2)}" width="4" height="${Math.round(plateH * 0.6)}" rx="2" fill="${opts.accentHex}" />
+    </g>
+    <rect x="1" y="1" width="${plateW - 2}" height="${plateH - 2}" rx="${rx}" fill="none" stroke="${opts.borderHex}" stroke-width="1.5" />
+  </svg>`;
+  const plateBuf = Buffer.from(
+    new Resvg(plateSvg, { fitTo: { mode: "width", value: plateW } }).render().asPng()
+  );
+  const composed = await sharp(plateBuf)
+    .composite([{ input: opts.fittedLogo, left: padX, top: padY }])
+    .png()
+    .toBuffer();
+  return { buffer: composed, width: plateW, height: plateH };
+}
+
+async function renderCustomContactPill(opts: {
+  lines: string[];
+  maxWidth: number;
+  canvasW: number;
+  canvasH: number;
+  estiloVisual: "moderno" | "classico";
+  paleta: ReturnType<typeof buildBrandPalette>;
+  fontPairId?: ImagemContexto["fontPairId"];
+}): Promise<{ buffer: Buffer; width: number; height: number } | null> {
+  const cleanText = opts.lines
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join("  •  ");
+  if (!cleanText) return null;
+
+  const { pair, fonts } = getSatoriFontsForPair(opts.fontPairId || "tecnica");
+  const isDark = opts.estiloVisual === "moderno";
+  const bg = isDark ? "rgba(255, 255, 255, 0.14)" : "#FFFFFF";
+  const border = isDark
+    ? mixHex(opts.paleta.primaria.hex, "#FFFFFF", 0.45)
+    : mixHex(opts.paleta.primaria.hex, opts.paleta.papel.hex, 0.5);
+  const textCol = isDark ? "#FFFFFF" : opts.paleta.tinta.hex;
+  const isLargeVertical = opts.canvasW >= 1000 && opts.canvasH >= 1200;
+  const fontSize = isLargeVertical
+    ? cleanText.length > 42
+      ? 26
+      : 30
+    : cleanText.length > 44
+    ? 22
+    : 25;
+  const pillH = isLargeVertical ? 84 : 68;
+  const h = React.createElement;
+
+  const el = h(
+    "div",
+    {
+      style: {
+        width: `${opts.maxWidth}px`,
+        height: `${pillH}px`,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      },
+    },
+    h(
+      "div",
+      {
+        style: {
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "center",
+          gap: "14px",
+          backgroundColor: bg,
+          border: `1.5px solid ${border}`,
+          borderRadius: "999px",
+          padding: isLargeVertical ? "14px 32px" : "12px 26px",
+          maxWidth: `${opts.maxWidth - 16}px`,
+        },
+      },
+      h("div", {
+        style: {
+          width: isLargeVertical ? "11px" : "9px",
+          height: isLargeVertical ? "11px" : "9px",
+          borderRadius: "999px",
+          backgroundColor: opts.paleta.primaria.hex,
+        },
+      }),
+      h(
+        "div",
+        {
+          style: {
+            fontFamily: pair.tituloFamily,
+            fontWeight: 600,
+            fontSize: `${fontSize}px`,
+            color: textCol,
+            lineHeight: 1.2,
+          },
+        },
+        cleanText
+      )
+    )
+  );
+
+  const svg = await satori(el, { width: opts.maxWidth, height: pillH, fonts });
+  const buf = Buffer.from(
+    new Resvg(svg, { fitTo: { mode: "width", value: opts.maxWidth } }).render().asPng()
+  );
+  return { buffer: buf, width: opts.maxWidth, height: pillH };
+}
+
 /**
  * Constrói uma peça visual com composição própria adaptada à proporção de destino,
  * separando em 3 camadas:
@@ -1082,14 +1619,18 @@ async function generateSocialArtworkFromApprovedRefs(
   const disposicao = rede.composicao.disposicao;
   const masterName = estiloVisual === "moderno" ? "capa-moderna.jpg" : "capa-classica.jpg";
 
-  const fornoParts = await getFornoExtractedParts(estiloVisual);
-  const baseRgb = fornoParts.baseRgb;
-
   const refBuf = contexto?.logotipoReferencia;
   const isCustomBrand =
     !isDefaultFornoBrand(contexto?.nome) &&
     Boolean(refBuf && refBuf.length > 0) &&
     !(await isImageMostlySameAsRef(refBuf!, "logo.jpg"));
+
+  const fornoParts = isCustomBrand ? null : await getFornoExtractedParts(estiloVisual);
+  const baseRgb = fornoParts
+    ? fornoParts.baseRgb
+    : estiloVisual === "moderno"
+    ? { r: 22, g: 37, b: 58 }
+    : { r: 246, g: 247, b: 249 };
 
   const hierarquia = resolverHierarquiaInformacaoConfig(
     {
@@ -1101,24 +1642,17 @@ async function generateSocialArtworkFromApprovedRefs(
     rede
   );
 
-  // Paleta cromática ligeiramente ajustada se marca personalizada tiver cor distinta
   let canvasBgRgb = { ...baseRgb };
   const overlays: OverlayOptions[] = [];
   let adapted = isCustomBrand;
 
-  const borderColorRgb =
-    estiloVisual === "moderno"
+  const borderColorRgb = contexto?.paleta?.primaria
+    ? !isCustomBrand && estiloVisual === "moderno"
       ? { r: 217, g: 130, b: 43 }
-      : contexto?.paleta?.primaria
-      ? hexToRgb(contexto.paleta.primaria.hex)
-      : { r: 184, g: 74, b: 36 };
-
-  if (isCustomBrand && contexto?.paleta) {
-    canvasBgRgb =
-      estiloVisual === "moderno"
-        ? hexToRgb(mixHex(contexto.paleta.tinta.hex, "#1D130E", 0.55))
-        : hexToRgb(mixHex(contexto.paleta.papel.hex, "#FFF6E8", 0.72));
-  }
+      : hexToRgb(contexto.paleta.primaria.hex)
+    : estiloVisual === "moderno"
+    ? { r: 217, g: 130, b: 43 }
+    : { r: 184, g: 74, b: 36 };
 
   const mob = rede.safeZoneMobile;
   const deskMobAvatarRight = Math.max(
@@ -1126,51 +1660,249 @@ async function generateSocialArtworkFromApprovedRefs(
     rede.avatarOverlapMobile ? rede.avatarOverlapMobile.x + rede.avatarOverlapMobile.width + 18 : 0
   );
 
-  // Prepara bloco informativo adaptado (Forno da Vilariça vs marca externa Entrada B)
   const customParts =
     isCustomBrand && refBuf ? await extractCustomClientParts(refBuf) : null;
+  const customStats = customParts ? await measureOpaqueStats(customParts.fullClean) : null;
+
+  const customPaletaResolved =
+    isCustomBrand
+      ? contexto?.paleta ||
+        buildBrandPalette({
+          primaria: "#0078FC",
+          secundaria: "#142A4D",
+          papel: "#F6F7F9",
+          tinta: "#18212A",
+        })
+      : null;
+
+  let customBackdropBuf: Buffer | null = null;
+  if (isCustomBrand && customPaletaResolved) {
+    const bd = await buildCustomBrandAmbientBackdrop({
+      W,
+      H,
+      estiloVisual,
+      disposicao,
+      redeId: rede.id,
+      paleta: customPaletaResolved,
+    });
+    customBackdropBuf = bd.buffer;
+    canvasBgRgb = bd.canvasBgRgb;
+  }
+
+  const returnFixtureNome = isCustomBrand
+    ? "referencia-cliente"
+    : `docs/referencias/ia-aprovada/${masterName}`;
+
+  const getCustomExtraContactLines = (): string[] => {
+    if (!isCustomBrand) return [];
+    const maxLinhas = rede.composicao.maxLinhasContactos ?? 0;
+    if (maxLinhas <= 0) return [];
+    const raw = (contexto?.textosPedidos || []).map((s) => s.trim()).filter(Boolean);
+    const nomeLow = (contexto?.nome || "").trim().toLowerCase();
+    const sloganLow = (contexto?.slogan || "").trim().toLowerCase();
+    return raw
+      .filter((t) => {
+        const low = t.toLowerCase();
+        if (!contexto?.simbolo) {
+          if (nomeLow && low === nomeLow) return false;
+          if (sloganLow && low === sloganLow) return false;
+        } else {
+          if (nomeLow && low === nomeLow) return false;
+        }
+        return true;
+      })
+      .slice(0, maxLinhas);
+  };
 
   const placeBrandInfoInBox = async (
     box: { x: number; y: number; width: number; height: number },
     mode: "inline" | "stack" | "stack-compact" | "vertical-highlighted"
   ) => {
-    if (customParts) {
-      // Renderiza logótipo do cliente num cartão coerente de contraste dentro da área segura
-      const pillBg =
-        estiloVisual === "moderno"
-          ? { r: 250, g: 247, b: 242, alpha: 0.95 }
-          : { r: 255, g: 249, b: 238, alpha: 0.96 };
+    if (customParts && customPaletaResolved && customStats) {
+      const contactLines =
+        mode === "vertical-highlighted" ? getCustomExtraContactLines() : [];
+      const pill =
+        contactLines.length > 0
+          ? await renderCustomContactPill({
+              lines: contactLines,
+              maxWidth: box.width,
+              canvasW: W,
+              canvasH: H,
+              estiloVisual,
+              paleta: customPaletaResolved,
+              fontPairId: contexto?.fontPairId,
+            })
+          : null;
 
-      let innerLogo: Buffer;
+      const gapPill = pill ? Math.max(24, Math.round(box.height * 0.055)) : 0;
+      const pillReservedH = pill ? pill.height + gapPill : 0;
+      const logoSlotH = Math.max(48, box.height - pillReservedH);
+
+      const darkSurfaceHex = mixHex(
+        customPaletaResolved.tinta.hex,
+        customPaletaResolved.secundaria.hex,
+        0.42
+      );
+      const needsDarkAdaptation =
+        estiloVisual === "moderno" && customStats.darkFraction >= 0.08;
+      let darkAdapted: {
+        buffer: Buffer;
+        appliedKnockout: boolean;
+        hasSplitWordmark: boolean;
+      } | null = null;
+      if (needsDarkAdaptation) {
+        darkAdapted = await adaptLogoForDarkSurface(
+          customParts.fullClean,
+          Boolean(contexto?.logotipoDna?.isDarkMonochrome),
+          darkSurfaceHex
+        );
+      }
+
+      const needDarkFallbackPlate =
+        needsDarkAdaptation && !(darkAdapted?.appliedKnockout);
+      const needLightFallbackPlate =
+        estiloVisual === "classico" &&
+        customStats.brightFraction >= 0.75 &&
+        customStats.darkFraction < 0.06;
+
+      const padReserveX =
+        needDarkFallbackPlate || needLightFallbackPlate
+          ? 52
+          : mode === "inline"
+          ? Math.max(24, Math.round(box.width * 0.06))
+          : 12;
+      const padReserveY =
+        needDarkFallbackPlate || needLightFallbackPlate
+          ? 36
+          : mode === "inline"
+          ? Math.max(14, Math.round(logoSlotH * 0.14))
+          : 10;
+      const maxInnerW = Math.max(48, box.width - padReserveX);
+      const maxInnerH = Math.max(36, logoSlotH - padReserveY);
+
+      const logoSourceBuf =
+        darkAdapted?.appliedKnockout && darkAdapted.buffer
+          ? darkAdapted.buffer
+          : customParts.fullClean;
+
+      let rawLogoBuf: Buffer;
       if (mode === "inline" && customParts.canSplitInline) {
+        const inlineParts =
+          darkAdapted?.appliedKnockout && darkAdapted.buffer
+            ? await extractCustomClientParts(darkAdapted.buffer)
+            : customParts;
         const inline = await composeInlineHorizontalPair({
-          emblemBuf: customParts.emblem,
-          wordmarkBuf: customParts.wordmark,
-          targetW: Math.max(80, box.width - 28),
-          targetH: Math.max(48, box.height - 20),
+          emblemBuf: inlineParts.emblem,
+          wordmarkBuf: inlineParts.wordmark,
+          targetW: maxInnerW,
+          targetH: maxInnerH,
         });
-        innerLogo = inline.buffer;
+        rawLogoBuf = inline.buffer;
       } else {
-        innerLogo = await sharp(customParts.fullClean)
-          .resize(Math.max(48, box.width - 28), Math.max(48, box.height - 24), {
-            fit: "contain",
-            background: { r: 0, g: 0, b: 0, alpha: 0 },
-          })
+        rawLogoBuf = await sharp(logoSourceBuf)
+          .resize(maxInnerW, maxInnerH, { fit: "inside" })
           .png()
           .toBuffer();
       }
 
-      const cardW = box.width;
-      const cardH = box.height;
-      const card = await sharp({
-        create: { width: cardW, height: cardH, channels: 4, background: pillBg },
-      })
-        .composite([{ input: innerLogo, gravity: "center" }])
-        .png()
-        .toBuffer();
-      overlays.push({ input: card, left: box.x, top: box.y });
+      const fittedMeta = await sharp(rawLogoBuf).metadata();
+      const fw = fittedMeta.width || maxInnerW;
+      const fh = fittedMeta.height || maxInnerH;
+
+      let logoOverlayBuf = rawLogoBuf;
+      let logoOverlayW = fw;
+      let logoOverlayH = fh;
+
+      if (needDarkFallbackPlate) {
+        const plated = await createRoundedLogoPlate({
+          fittedLogo: rawLogoBuf,
+          logoW: fw,
+          logoH: fh,
+          plateBgHex: "#FFFFFF",
+          accentHex: customPaletaResolved.primaria.hex,
+          borderHex: mixHex(customPaletaResolved.primaria.hex, "#FFFFFF", 0.55),
+        });
+        logoOverlayBuf = plated.buffer;
+        logoOverlayW = plated.width;
+        logoOverlayH = plated.height;
+      } else if (needLightFallbackPlate) {
+        const plated = await createRoundedLogoPlate({
+          fittedLogo: rawLogoBuf,
+          logoW: fw,
+          logoH: fh,
+          plateBgHex: mixHex(
+            customPaletaResolved.tinta.hex,
+            customPaletaResolved.secundaria.hex,
+            0.35
+          ),
+          accentHex: customPaletaResolved.primaria.hex,
+          borderHex: mixHex(
+            customPaletaResolved.primaria.hex,
+            customPaletaResolved.tinta.hex,
+            0.45
+          ),
+        });
+        logoOverlayBuf = plated.buffer;
+        logoOverlayW = plated.width;
+        logoOverlayH = plated.height;
+      }
+
+      const totalBlockH = logoOverlayH + (pill ? gapPill + pill.height : 0);
+      const startY = box.y + Math.max(0, Math.round((box.height - totalBlockH) / 2));
+      const logoLeft = box.x + Math.max(0, Math.round((box.width - logoOverlayW) / 2));
+
+      // Se aplicámos variante de fundo escuro diretamente sem placa opaca, junta halo radial sem arestas atrás da mascote
+      if (darkAdapted?.appliedKnockout) {
+        const radius = Math.max(48, Math.round(logoOverlayH * 1.12));
+        const diameter = radius * 2;
+        const mascotCenterX =
+          logoLeft +
+          (darkAdapted.hasSplitWordmark
+            ? Math.min(Math.round(logoOverlayW * 0.38), Math.round(logoOverlayH * 0.56))
+            : Math.round(logoOverlayW * 0.5));
+        const mascotCenterY = startY + Math.round(logoOverlayH * 0.5);
+        const haloRawLeft = mascotCenterX - radius;
+        const haloRawTop = mascotCenterY - radius;
+        const cropLeft = Math.max(0, -haloRawLeft);
+        const cropTop = Math.max(0, -haloRawTop);
+        const targetLeft = Math.max(0, haloRawLeft);
+        const targetTop = Math.max(0, haloRawTop);
+        const cropW = Math.min(diameter - cropLeft, W - targetLeft);
+        const cropH = Math.min(diameter - cropTop, H - targetTop);
+
+        if (cropW >= 32 && cropH >= 32) {
+          const glowRgb = mixRgbChannels(
+            hexToRgb(customPaletaResolved.primaria.hex),
+            { r: 210, g: 235, b: 255 },
+            0.38
+          );
+          let haloBuf = await createMascotBacklightGlow(diameter, glowRgb, 0.34);
+          if (cropW < diameter || cropH < diameter) {
+            haloBuf = await sharp(haloBuf)
+              .extract({ left: cropLeft, top: cropTop, width: cropW, height: cropH })
+              .png()
+              .toBuffer();
+          }
+          overlays.push({
+            input: haloBuf,
+            left: targetLeft,
+            top: targetTop,
+          });
+        }
+      }
+
+      overlays.push({ input: logoOverlayBuf, left: logoLeft, top: startY });
+      if (pill) {
+        overlays.push({
+          input: pill.buffer,
+          left: box.x + Math.max(0, Math.round((box.width - pill.width) / 2)),
+          top: startY + logoOverlayH + gapPill,
+        });
+      }
       return;
     }
+
+    if (!fornoParts) return;
 
     if (mode === "inline") {
       const inline = await composeInlineHorizontalPair({
@@ -1196,7 +1928,6 @@ async function generateSocialArtworkFromApprovedRefs(
       return;
     }
 
-    // `stack` ou `stack-compact`: emblema + wordmark (+ slogan só se mode === "stack" e incluirSlogan)
     const stack = await composeVerticalHighlightedStack({
       emblemBuf: fornoParts.emblem,
       wordmarkBuf: fornoParts.wordmark,
@@ -1208,6 +1939,10 @@ async function generateSocialArtworkFromApprovedRefs(
     overlays.push({ input: stack, left: box.x, top: box.y });
   };
 
+  if (customBackdropBuf) {
+    overlays.push({ input: customBackdropBuf, left: 0, top: 0 });
+  }
+
   // =========================================================================
   // DISPOSIÇÃO 1: FAIXAS ULTRA-LARGAS (LinkedIn Pessoal 4:1, Empresa 5,9:1, YouTube 1546×423)
   // Regra: logótipo + nome EM LINHA HORIZONTAL, sem slogan nem contactos; fundo sangra fora da zona móvel
@@ -1216,86 +1951,87 @@ async function generateSocialArtworkFromApprovedRefs(
     adapted = true;
     const isYt = rede.id === "yt-banner";
     const infoLeft = isYt ? mob.x + 48 : Math.max(mob.x + 20, deskMobAvatarRight + 10);
-    const infoRight = mob.x + mob.width - (estiloVisual === "classico" && !isYt ? 96 : 36);
+    const infoRight =
+      mob.x +
+      mob.width -
+      (!isCustomBrand && estiloVisual === "classico" && !isYt ? 96 : 28);
     const infoTop = mob.y + Math.max(10, Math.round(mob.height * 0.08));
     const infoHeight = Math.max(80, mob.height - Math.max(20, Math.round(mob.height * 0.16)));
     const infoWidth = Math.max(240, infoRight - infoLeft);
 
     if (estiloVisual === "moderno") {
-      if (isYt) {
-        // TV & Desktop wings (2560×1440): fotografia atmosférica suave em volta da faixa central 1546×423
-        const tvBackdrop = await featherAndTintLayer(
-          await sharp(fornoParts.breadArchScene)
-            .resize(W, H, { fit: "cover", position: "centre" })
-            .blur(1.1)
-            .png()
-            .toBuffer(),
-          { topPx: 80, bottomPx: 80, leftPx: 140, rightPx: 140, opacity: 0.42 }
-        );
-        // Faixa central de monitor (2560×423) com arco/pão suave nas laterais de computador
-        const rightWingW = W - (mob.x + mob.width) + 220;
-        const rightWing = await featherAndTintLayer(
-          await sharp(fornoParts.breadArchScene)
-            .resize(rightWingW, mob.height, { fit: "cover", position: "centre" })
-            .blur(0.75)
-            .png()
-            .toBuffer(),
-          { leftPx: 160, topPx: 28, bottomPx: 28, opacity: 0.85 }
-        );
-        const leftWingW = mob.x + 120;
-        const leftWing = await featherAndTintLayer(
-          await sharp(fornoParts.breadSoftScene)
-            .resize(leftWingW, mob.height, { fit: "cover", position: "centre" })
-            .blur(1.15)
-            .png()
-            .toBuffer(),
-          { rightPx: 140, topPx: 28, bottomPx: 28, opacity: 0.46 }
-        );
-        // Faixa calma central atrás da informação dentro de 1546×423
-        const safePlate = await featherAndTintLayer(
-          await sharp({
-            create: {
-              width: mob.width - 36,
-              height: mob.height - 20,
-              channels: 4,
-              background: { ...canvasBgRgb, alpha: 1 },
-            },
-          })
-            .png()
-            .toBuffer(),
-          { leftPx: 90, rightPx: 90, topPx: 24, bottomPx: 24, opacity: 0.92 }
-        );
+      if (!isCustomBrand && fornoParts) {
+        if (isYt) {
+          const tvBackdrop = await featherAndTintLayer(
+            await sharp(fornoParts.breadArchScene)
+              .resize(W, H, { fit: "cover", position: "centre" })
+              .blur(1.1)
+              .png()
+              .toBuffer(),
+            { topPx: 80, bottomPx: 80, leftPx: 140, rightPx: 140, opacity: 0.42 }
+          );
+          const rightWingW = W - (mob.x + mob.width) + 220;
+          const rightWing = await featherAndTintLayer(
+            await sharp(fornoParts.breadArchScene)
+              .resize(rightWingW, mob.height, { fit: "cover", position: "centre" })
+              .blur(0.75)
+              .png()
+              .toBuffer(),
+            { leftPx: 160, topPx: 28, bottomPx: 28, opacity: 0.85 }
+          );
+          const leftWingW = mob.x + 120;
+          const leftWing = await featherAndTintLayer(
+            await sharp(fornoParts.breadSoftScene)
+              .resize(leftWingW, mob.height, { fit: "cover", position: "centre" })
+              .blur(1.15)
+              .png()
+              .toBuffer(),
+            { rightPx: 140, topPx: 28, bottomPx: 28, opacity: 0.46 }
+          );
+          const safePlate = await featherAndTintLayer(
+            await sharp({
+              create: {
+                width: mob.width - 36,
+                height: mob.height - 20,
+                channels: 4,
+                background: { ...canvasBgRgb, alpha: 1 },
+              },
+            })
+              .png()
+              .toBuffer(),
+            { leftPx: 90, rightPx: 90, topPx: 24, bottomPx: 24, opacity: 0.92 }
+          );
 
-        overlays.push(
-          { input: tvBackdrop, left: 0, top: 0 },
-          { input: leftWing, left: 0, top: mob.y },
-          { input: rightWing, left: W - rightWingW, top: mob.y },
-          { input: safePlate, left: mob.x + 18, top: mob.y + 10 }
-        );
-      } else {
-        // LinkedIn 4:1 / 5,9:1: lado direito com arco + pão a sangrar até W, lado esquerdo ambiente calmo
-        const rightEdgeW = Math.max(180, W - (mob.x + mob.width) + Math.round(W * 0.14));
-        const rightScene = await featherAndTintLayer(
-          await sharp(fornoParts.breadArchScene)
-            .resize(rightEdgeW, H, { fit: "cover", position: "centre" })
-            .blur(0.7)
-            .png()
-            .toBuffer(),
-          { leftPx: Math.min(180, Math.round(rightEdgeW * 0.65)), opacity: 0.9 }
-        );
-        const leftBleedW = Math.max(140, Math.round(mob.x * 0.92));
-        const leftBleed = await featherAndTintLayer(
-          await sharp(fornoParts.breadSoftScene)
-            .resize(leftBleedW, H, { fit: "cover", position: "centre" })
-            .blur(1.25)
-            .png()
-            .toBuffer(),
-          { rightPx: Math.round(leftBleedW * 0.45), bottomPx: Math.round(H * 0.35), opacity: 0.32 }
-        );
-        overlays.push(
-          { input: leftBleed, left: 0, top: 0 },
-          { input: rightScene, left: W - rightEdgeW, top: 0 }
-        );
+          overlays.push(
+            { input: tvBackdrop, left: 0, top: 0 },
+            { input: leftWing, left: 0, top: mob.y },
+            { input: rightWing, left: W - rightWingW, top: mob.y },
+            { input: safePlate, left: mob.x + 18, top: mob.y + 10 }
+          );
+        } else {
+          const rightEdgeW = Math.max(180, W - (mob.x + mob.width) + Math.round(W * 0.14));
+          const rightScene = await featherAndTintLayer(
+            await sharp(fornoParts.breadArchScene)
+              .resize(rightEdgeW, H, { fit: "cover", position: "centre" })
+              .blur(0.7)
+              .png()
+              .toBuffer(),
+            { leftPx: Math.min(180, Math.round(rightEdgeW * 0.65)), opacity: 0.9 }
+          );
+          const leftBleedW = Math.max(140, Math.round(mob.x * 0.92));
+          const leftBleed = await featherAndTintLayer(
+            await sharp(fornoParts.breadSoftScene)
+              .resize(leftBleedW, H, { fit: "cover", position: "centre" })
+              .blur(1.25)
+              .png()
+              .toBuffer(),
+            { rightPx: Math.round(leftBleedW * 0.45), bottomPx: Math.round(H * 0.35), opacity: 0.32 }
+          );
+          overlays.push(
+            { input: leftBleed, left: 0, top: 0 },
+            { input: rightScene, left: W - rightEdgeW, top: 0 }
+          );
+        }
       }
 
       await placeBrandInfoInBox(
@@ -1303,45 +2039,46 @@ async function generateSocialArtworkFromApprovedRefs(
         "inline"
       );
     } else {
-      // CLÁSSICO ultra-largo: pergaminho quente + luz dourada suave a sangrar fora da zona móvel + moldura dupla
-      if (isYt) {
-        const warmTvWash = await featherAndTintLayer(
-          await sharp(fornoParts.breadSoftScene)
-            .resize(W, H, { fit: "cover", position: "centre" })
-            .modulate({ brightness: 1.25, saturation: 0.72 })
-            .blur(1.5)
-            .png()
-            .toBuffer(),
-          { topPx: 80, bottomPx: 80, leftPx: 120, rightPx: 120, opacity: 0.18 }
-        );
-        const centerCream = await featherAndTintLayer(
-          await sharp({
-            create: {
-              width: mob.width + 80,
-              height: mob.height + 36,
-              channels: 4,
-              background: { ...canvasBgRgb, alpha: 1 },
-            },
-          })
-            .png()
-            .toBuffer(),
-          { leftPx: 90, rightPx: 90, topPx: 30, bottomPx: 30, opacity: 0.95 }
-        );
-        overlays.push(
-          { input: warmTvWash, left: 0, top: 0 },
-          { input: centerCream, left: Math.max(0, mob.x - 40), top: Math.max(0, mob.y - 18) }
-        );
-      } else {
-        const warmSide = await featherAndTintLayer(
-          await sharp(fornoParts.breadSoftScene)
-            .resize(Math.round(W * 0.28), H, { fit: "cover", position: "centre" })
-            .modulate({ brightness: 1.28, saturation: 0.75 })
-            .blur(1.4)
-            .png()
-            .toBuffer(),
-          { leftPx: Math.round(W * 0.14), opacity: 0.2 }
-        );
-        overlays.push({ input: warmSide, left: W - Math.round(W * 0.28), top: 0 });
+      if (!isCustomBrand && fornoParts) {
+        if (isYt) {
+          const warmTvWash = await featherAndTintLayer(
+            await sharp(fornoParts.breadSoftScene)
+              .resize(W, H, { fit: "cover", position: "centre" })
+              .modulate({ brightness: 1.25, saturation: 0.72 })
+              .blur(1.5)
+              .png()
+              .toBuffer(),
+            { topPx: 80, bottomPx: 80, leftPx: 120, rightPx: 120, opacity: 0.18 }
+          );
+          const centerCream = await featherAndTintLayer(
+            await sharp({
+              create: {
+                width: mob.width + 80,
+                height: mob.height + 36,
+                channels: 4,
+                background: { ...canvasBgRgb, alpha: 1 },
+              },
+            })
+              .png()
+              .toBuffer(),
+            { leftPx: 90, rightPx: 90, topPx: 30, bottomPx: 30, opacity: 0.95 }
+          );
+          overlays.push(
+            { input: warmTvWash, left: 0, top: 0 },
+            { input: centerCream, left: Math.max(0, mob.x - 40), top: Math.max(0, mob.y - 18) }
+          );
+        } else {
+          const warmSide = await featherAndTintLayer(
+            await sharp(fornoParts.breadSoftScene)
+              .resize(Math.round(W * 0.28), H, { fit: "cover", position: "centre" })
+              .modulate({ brightness: 1.28, saturation: 0.75 })
+              .blur(1.4)
+              .png()
+              .toBuffer(),
+            { leftPx: Math.round(W * 0.14), opacity: 0.2 }
+          );
+          overlays.push({ input: warmSide, left: W - Math.round(W * 0.28), top: 0 });
+        }
       }
 
       const borderInset = isYt ? 44 : Math.max(12, Math.round(H * 0.06));
@@ -1349,8 +2086,7 @@ async function generateSocialArtworkFromApprovedRefs(
         ...(await makeClassicDoubleBorderOverlays(W, H, borderInset, borderColorRgb, 0.5))
       );
 
-      // Ornamento de espiga clássica à direita estritamente dentro da zona móvel
-      if (fornoParts.wheatRight && !isCustomBrand && H >= 190) {
+      if (!isCustomBrand && fornoParts?.wheatRight && H >= 190) {
         const sprigH = Math.max(80, Math.round(infoHeight * 0.92));
         const sprigW = Math.max(36, Math.round(sprigH * 0.45));
         const sprigScaled = await featherEdges(
@@ -1384,7 +2120,7 @@ async function generateSocialArtworkFromApprovedRefs(
       .png()
       .toBuffer();
 
-    return { buffer: finalBuf, fixtureNome: `docs/referencias/ia-aprovada/${masterName}`, adapted };
+    return { buffer: finalBuf, fixtureNome: returnFixtureNome, adapted };
   }
 
   // =========================================================================
@@ -1393,61 +2129,97 @@ async function generateSocialArtworkFromApprovedRefs(
   // =========================================================================
   if (disposicao === "horizontal-bipartida") {
     adapted = true;
-    const infoLeft = Math.max(mob.x + 22, deskMobAvatarRight + 10);
-    const splitX = Math.round(mob.x + mob.width * 0.625);
-    const infoWidth = Math.max(260, splitX - infoLeft - 14);
-    const infoTop = mob.y + Math.max(14, Math.round(mob.height * 0.04));
-    const infoHeight = Math.max(200, mob.height - Math.max(28, Math.round(mob.height * 0.08)));
 
-    const rightSceneStart = splitX - 18;
-    const rightSceneW = W - rightSceneStart;
+    if (isCustomBrand) {
+      // Coloca o bloco informativo estritamente acima da altura dos avatares e à direita do avatar desktop
+      const minAvatarTop = Math.min(
+        rede.avatarOverlapDesktop ? rede.avatarOverlapDesktop.y : H,
+        rede.avatarOverlapMobile ? rede.avatarOverlapMobile.y : H
+      );
+      const desktopClearLeft = rede.avatarOverlapDesktop
+        ? Math.max(mob.x + 24, rede.avatarOverlapDesktop.x + rede.avatarOverlapDesktop.width + 16)
+        : mob.x + 24;
+      const mobLeftIfAboveAvatar = mob.x + 24;
+      const canSitCleanlyAboveBothAvatars = minAvatarTop - (mob.y + 18) >= 215;
 
-    if (estiloVisual === "moderno") {
-      // Ambiente esquerdo acima do avatar a sangrar para a borda esquerda de computador
-      const leftTopBleedW = Math.max(120, Math.round(mob.x * 0.96));
-      const leftTopBleedH = Math.max(120, (rede.avatarOverlapDesktop?.y || Math.round(H * 0.6)) - 20);
-      const leftBleed = await featherAndTintLayer(
-        await sharp(fornoParts.breadSoftScene)
-          .resize(leftTopBleedW, leftTopBleedH, { fit: "cover", position: "centre" })
-          .blur(1.25)
-          .png()
-          .toBuffer(),
-        { rightPx: 48, bottomPx: 64, opacity: 0.34 }
-      );
+      const infoLeft = canSitCleanlyAboveBothAvatars
+        ? rede.avatarOverlapDesktop && mob.x + 24 < rede.avatarOverlapDesktop.x + rede.avatarOverlapDesktop.width
+          ? desktopClearLeft
+          : mobLeftIfAboveAvatar
+        : Math.max(mob.x + 22, deskMobAvatarRight + 10);
 
-      // Fotografia editorial hero com arco terracota do centro-direita até à borda W
-      const heroRight = await featherAndTintLayer(
-        await sharp(fornoParts.breadArchScene)
-          .resize(rightSceneW, H, { fit: "cover", position: "centre" })
-          .png()
-          .toBuffer(),
-        { leftPx: Math.min(180, Math.round(rightSceneW * 0.28)), opacity: 1 }
-      );
+      const splitX = Math.round(mob.x + mob.width * 0.65);
+      const infoWidth = Math.max(300, splitX - infoLeft - 14);
+      const infoTop = mob.y + Math.max(14, Math.round(mob.height * 0.04));
+      const maxSafeBottom = canSitCleanlyAboveBothAvatars
+        ? minAvatarTop - 18
+        : mob.y + mob.height - 14;
+      const infoHeight = Math.max(180, maxSafeBottom - infoTop);
 
-      overlays.push(
-        { input: leftBleed, left: 0, top: 0 },
-        { input: heroRight, left: rightSceneStart, top: 0 }
+      if (estiloVisual === "classico") {
+        overlays.push(
+          ...(await makeClassicDoubleBorderOverlays(W, H, Math.round(H * 0.032), borderColorRgb, 0.48))
+        );
+      }
+
+      await placeBrandInfoInBox(
+        { x: infoLeft, y: infoTop, width: infoWidth, height: infoHeight },
+        "stack"
       );
-    } else {
-      // Clássico bipartido: pão dourado luminoso à direita fundido em pergaminho + espiga + filetes duplos
-      const heroRightClassic = await featherAndTintLayer(
-        await sharp(fornoParts.breadSoftScene)
-          .resize(rightSceneW, H, { fit: "cover", position: "centre" })
-          .modulate({ brightness: 1.16, saturation: 0.9 })
-          .png()
-          .toBuffer(),
-        { leftPx: Math.min(180, Math.round(rightSceneW * 0.34)), opacity: 0.72 }
-      );
-      overlays.push({ input: heroRightClassic, left: rightSceneStart, top: 0 });
-      overlays.push(
-        ...(await makeClassicDoubleBorderOverlays(W, H, Math.round(H * 0.032), borderColorRgb, 0.5))
+    } else if (fornoParts) {
+      const infoLeft = Math.max(mob.x + 22, deskMobAvatarRight + 10);
+      const splitX = Math.round(mob.x + mob.width * 0.625);
+      const infoWidth = Math.max(260, splitX - infoLeft - 14);
+      const infoTop = mob.y + Math.max(14, Math.round(mob.height * 0.04));
+      const infoHeight = Math.max(200, mob.height - Math.max(28, Math.round(mob.height * 0.08)));
+
+      const rightSceneStart = splitX - 18;
+      const rightSceneW = W - rightSceneStart;
+
+      if (estiloVisual === "moderno") {
+        const leftTopBleedW = Math.max(120, Math.round(mob.x * 0.96));
+        const leftTopBleedH = Math.max(120, (rede.avatarOverlapDesktop?.y || Math.round(H * 0.6)) - 20);
+        const leftBleed = await featherAndTintLayer(
+          await sharp(fornoParts.breadSoftScene)
+            .resize(leftTopBleedW, leftTopBleedH, { fit: "cover", position: "centre" })
+            .blur(1.25)
+            .png()
+            .toBuffer(),
+          { rightPx: 48, bottomPx: 64, opacity: 0.34 }
+        );
+
+        const heroRight = await featherAndTintLayer(
+          await sharp(fornoParts.breadArchScene)
+            .resize(rightSceneW, H, { fit: "cover", position: "centre" })
+            .png()
+            .toBuffer(),
+          { leftPx: Math.min(180, Math.round(rightSceneW * 0.28)), opacity: 1 }
+        );
+
+        overlays.push(
+          { input: leftBleed, left: 0, top: 0 },
+          { input: heroRight, left: rightSceneStart, top: 0 }
+        );
+      } else {
+        const heroRightClassic = await featherAndTintLayer(
+          await sharp(fornoParts.breadSoftScene)
+            .resize(rightSceneW, H, { fit: "cover", position: "centre" })
+            .modulate({ brightness: 1.16, saturation: 0.9 })
+            .png()
+            .toBuffer(),
+          { leftPx: Math.min(180, Math.round(rightSceneW * 0.34)), opacity: 0.72 }
+        );
+        overlays.push({ input: heroRightClassic, left: rightSceneStart, top: 0 });
+        overlays.push(
+          ...(await makeClassicDoubleBorderOverlays(W, H, Math.round(H * 0.032), borderColorRgb, 0.5))
+        );
+      }
+
+      await placeBrandInfoInBox(
+        { x: infoLeft, y: infoTop, width: infoWidth, height: infoHeight },
+        "stack"
       );
     }
-
-    await placeBrandInfoInBox(
-      { x: infoLeft, y: infoTop, width: infoWidth, height: infoHeight },
-      "stack"
-    );
 
     const finalBuf = await sharp({
       create: { width: W, height: H, channels: 4, background: { ...canvasBgRgb, alpha: 1 } },
@@ -1457,46 +2229,50 @@ async function generateSocialArtworkFromApprovedRefs(
       .png()
       .toBuffer();
 
-    return { buffer: finalBuf, fixtureNome: `docs/referencias/ia-aprovada/${masterName}`, adapted };
+    return { buffer: finalBuf, fixtureNome: returnFixtureNome, adapted };
   }
 
   // =========================================================================
   // DISPOSIÇÃO 3: GOOGLE PERFIL DE EMPRESA (1024×576 — mais imagem, menos texto)
-  // Regra: >= 65% fotografia protagonista a sangrar; bloco compacto emblema + nome (sem slogan/contactos)
+  // Regra: >= 65% imagem/ambiente protagonista a sangrar; bloco compacto emblema + nome (sem slogan/contactos)
   // =========================================================================
   if (disposicao === "imagem-destaque-min-texto") {
     adapted = true;
-    const photoLeft = Math.round(W * 0.22);
-    const photoW = W - photoLeft;
 
-    if (estiloVisual === "moderno") {
-      const hero = await featherAndTintLayer(
-        await sharp(fornoParts.breadArchScene)
-          .resize(photoW, H, { fit: "cover", position: "centre" })
-          .png()
-          .toBuffer(),
-        { leftPx: Math.min(260, Math.round(photoW * 0.36)), opacity: 1 }
-      );
-      overlays.push({ input: hero, left: photoLeft, top: 0 });
-    } else {
-      const heroClassic = await featherAndTintLayer(
-        await sharp(fornoParts.breadSoftScene)
-          .resize(photoW, H, { fit: "cover", position: "centre" })
-          .modulate({ brightness: 1.14, saturation: 0.92 })
-          .png()
-          .toBuffer(),
-        { leftPx: Math.min(260, Math.round(photoW * 0.38)), opacity: 0.86 }
-      );
-      overlays.push({ input: heroClassic, left: photoLeft, top: 0 });
+    if (!isCustomBrand && fornoParts) {
+      const photoLeft = Math.round(W * 0.22);
+      const photoW = W - photoLeft;
+
+      if (estiloVisual === "moderno") {
+        const hero = await featherAndTintLayer(
+          await sharp(fornoParts.breadArchScene)
+            .resize(photoW, H, { fit: "cover", position: "centre" })
+            .png()
+            .toBuffer(),
+          { leftPx: Math.min(260, Math.round(photoW * 0.36)), opacity: 1 }
+        );
+        overlays.push({ input: hero, left: photoLeft, top: 0 });
+      } else {
+        const heroClassic = await featherAndTintLayer(
+          await sharp(fornoParts.breadSoftScene)
+            .resize(photoW, H, { fit: "cover", position: "centre" })
+            .modulate({ brightness: 1.14, saturation: 0.92 })
+            .png()
+            .toBuffer(),
+          { leftPx: Math.min(260, Math.round(photoW * 0.38)), opacity: 0.86 }
+        );
+        overlays.push({ input: heroClassic, left: photoLeft, top: 0 });
+        overlays.push(...(await makeClassicDoubleBorderOverlays(W, H, 18, borderColorRgb, 0.48)));
+      }
+    } else if (estiloVisual === "classico") {
       overlays.push(...(await makeClassicDoubleBorderOverlays(W, H, 18, borderColorRgb, 0.48)));
     }
 
-    // Compacto à esquerda estritamente dentro de safeZoneMobile (sem slogan nem contactos)
-    const boxW = Math.round(W * 0.28);
-    const boxH = Math.round(H * 0.56);
+    const boxW = Math.round(W * (isCustomBrand ? 0.34 : 0.28));
+    const boxH = Math.round(H * (isCustomBrand ? 0.46 : 0.56));
     await placeBrandInfoInBox(
       {
-        x: mob.x + 16,
+        x: mob.x + 18,
         y: Math.round(mob.y + (mob.height - boxH) / 2),
         width: boxW,
         height: boxH,
@@ -1512,7 +2288,7 @@ async function generateSocialArtworkFromApprovedRefs(
       .png()
       .toBuffer();
 
-    return { buffer: finalBuf, fixtureNome: `docs/referencias/ia-aprovada/${masterName}`, adapted };
+    return { buffer: finalBuf, fixtureNome: returnFixtureNome, adapted };
   }
 
   // =========================================================================
@@ -1525,47 +2301,59 @@ async function generateSocialArtworkFromApprovedRefs(
     const safeBottom = H - (rede.margemBasePx || 250) - 20;
     const safeH = safeBottom - safeTop;
 
-    // Camada (a) Fundo atmosférico calmo nas faixas de 250 px topo e base + laterais
-    const ambientStoryBg = await featherAndTintLayer(
-      await sharp(fornoParts.breadSoftScene)
-        .resize(W, H, { fit: "cover", position: "centre" })
-        .modulate(estiloVisual === "classico" ? { brightness: 1.24, saturation: 0.72 } : { brightness: 0.75 })
-        .blur(1.45)
-        .png()
-        .toBuffer(),
-      {
-        topPx: 140,
-        bottomPx: 140,
-        leftPx: 60,
-        rightPx: 60,
-        opacity: estiloVisual === "moderno" ? 0.28 : 0.16,
+    if (!isCustomBrand && fornoParts) {
+      const ambientStoryBg = await featherAndTintLayer(
+        await sharp(fornoParts.breadSoftScene)
+          .resize(W, H, { fit: "cover", position: "centre" })
+          .modulate(estiloVisual === "classico" ? { brightness: 1.24, saturation: 0.72 } : { brightness: 0.75 })
+          .blur(1.45)
+          .png()
+          .toBuffer(),
+        {
+          topPx: 140,
+          bottomPx: 140,
+          leftPx: 60,
+          rightPx: 60,
+          opacity: estiloVisual === "moderno" ? 0.28 : 0.16,
+        }
+      );
+      overlays.push({ input: ambientStoryBg, left: 0, top: 0 });
+
+      if (estiloVisual === "classico") {
+        overlays.push(...(await makeClassicDoubleBorderOverlays(W, H, 28, borderColorRgb, 0.45)));
       }
-    );
-    overlays.push({ input: ambientStoryBg, left: 0, top: 0 });
 
-    if (estiloVisual === "classico") {
-      overlays.push(...(await makeClassicDoubleBorderOverlays(W, H, 28, borderColorRgb, 0.45)));
+      const photoH = Math.round(safeH * 0.45);
+      const photoBand = await featherAndTintLayer(
+        await sharp(estiloVisual === "moderno" ? fornoParts.breadArchScene : fornoParts.breadSoftScene)
+          .resize(mob.width, photoH, { fit: "cover", position: "centre" })
+          .modulate(estiloVisual === "classico" ? { brightness: 1.12, saturation: 0.92 } : {})
+          .png()
+          .toBuffer(),
+        { topPx: 28, bottomPx: 120, leftPx: 32, rightPx: 32, opacity: estiloVisual === "classico" ? 0.84 : 1 }
+      );
+      overlays.push({ input: photoBand, left: mob.x, top: safeTop });
+
+      const infoTop = safeTop + photoH + 14;
+      const infoH = Math.max(320, safeBottom - infoTop - 8);
+      await placeBrandInfoInBox(
+        { x: mob.x + 24, y: infoTop, width: mob.width - 48, height: infoH },
+        "vertical-highlighted"
+      );
+    } else {
+      if (estiloVisual === "classico") {
+        overlays.push(...(await makeClassicDoubleBorderOverlays(W, H, 28, borderColorRgb, 0.45)));
+      }
+      await placeBrandInfoInBox(
+        {
+          x: mob.x + 32,
+          y: safeTop + Math.round(safeH * 0.14),
+          width: mob.width - 64,
+          height: Math.round(safeH * 0.68),
+        },
+        "vertical-highlighted"
+      );
     }
-
-    // Metade superior dentro da zona segura do Story: fotografia hero apetitosa (y 270..920)
-    const photoH = Math.round(safeH * 0.45);
-    const photoBand = await featherAndTintLayer(
-      await sharp(estiloVisual === "moderno" ? fornoParts.breadArchScene : fornoParts.breadSoftScene)
-        .resize(mob.width, photoH, { fit: "cover", position: "centre" })
-        .modulate(estiloVisual === "classico" ? { brightness: 1.12, saturation: 0.92 } : {})
-        .png()
-        .toBuffer(),
-      { topPx: 28, bottomPx: 120, leftPx: 32, rightPx: 32, opacity: estiloVisual === "classico" ? 0.84 : 1 }
-    );
-    overlays.push({ input: photoBand, left: mob.x, top: safeTop });
-
-    // Metade inferior dentro da zona segura: emblema em destaque + wordmark + slogan
-    const infoTop = safeTop + photoH + 14;
-    const infoH = Math.max(320, safeBottom - infoTop - 8);
-    await placeBrandInfoInBox(
-      { x: mob.x + 24, y: infoTop, width: mob.width - 48, height: infoH },
-      "vertical-highlighted"
-    );
 
     const finalBuf = await sharp({
       create: { width: W, height: H, channels: 4, background: { ...canvasBgRgb, alpha: 1 } },
@@ -1575,76 +2363,90 @@ async function generateSocialArtworkFromApprovedRefs(
       .png()
       .toBuffer();
 
-    return { buffer: finalBuf, fixtureNome: `docs/referencias/ia-aprovada/${masterName}`, adapted };
+    return { buffer: finalBuf, fixtureNome: returnFixtureNome, adapted };
   }
 
   // DISPOSIÇÃO VERTICAL FEED (Instagram 4:5 1080×1350 & 1:1 1080×1080)
-  const is45 = H > W;
-  const topPhotoH = Math.round(H * (is45 ? 0.42 : 0.39));
+  if (!isCustomBrand && fornoParts) {
+    const is45 = H > W;
+    const topPhotoH = Math.round(H * (is45 ? 0.42 : 0.39));
 
-  if (estiloVisual === "moderno") {
-    // Suave nas margens extremas acima de `mob.y` para sangrar sem gerar arestas textuais
-    const photoTop = await featherAndTintLayer(
-      await sharp(fornoParts.breadArchScene)
-        .resize(W, topPhotoH, { fit: "cover", position: "centre" })
-        .blur(0.45)
-        .png()
-        .toBuffer(),
-      { topPx: Math.round(mob.y * 0.4), bottomPx: Math.round(topPhotoH * 0.36), leftPx: 24, rightPx: 24, opacity: 0.96 }
+    if (estiloVisual === "moderno") {
+      const photoTop = await featherAndTintLayer(
+        await sharp(fornoParts.breadArchScene)
+          .resize(W, topPhotoH, { fit: "cover", position: "centre" })
+          .blur(0.45)
+          .png()
+          .toBuffer(),
+        { topPx: Math.round(mob.y * 0.4), bottomPx: Math.round(topPhotoH * 0.36), leftPx: 24, rightPx: 24, opacity: 0.96 }
+      );
+      overlays.push({ input: photoTop, left: 0, top: 0 });
+    } else {
+      const photoTopCls = await featherAndTintLayer(
+        await sharp(fornoParts.breadSoftScene)
+          .resize(W, topPhotoH, { fit: "cover", position: "centre" })
+          .modulate({ brightness: 1.18, saturation: 0.85 })
+          .blur(0.85)
+          .png()
+          .toBuffer(),
+        { topPx: 40, bottomPx: Math.round(topPhotoH * 0.42), leftPx: 28, rightPx: 28, opacity: 0.42 }
+      );
+      overlays.push({ input: photoTopCls, left: 0, top: 0 });
+      overlays.push(...(await makeClassicDoubleBorderOverlays(W, H, 26, borderColorRgb, 0.5)));
+    }
+
+    const feedInfoTop = Math.max(mob.y + 12, topPhotoH - Math.round(H * 0.04));
+    const feedInfoH = Math.max(300, mob.y + mob.height - feedInfoTop - 16);
+
+    if (estiloVisual === "classico" && fornoParts.wheatLeft && fornoParts.wheatRight) {
+      const sprigH = Math.round(feedInfoH * 0.58);
+      const sprigW = Math.round(sprigH * 0.42);
+      const [wL, wR] = await Promise.all([
+        featherEdges(
+          await sharp(fornoParts.wheatLeft)
+            .resize(sprigW, sprigH, { fit: "contain", background: { ...canvasBgRgb, alpha: 0 } })
+            .png()
+            .toBuffer(),
+          { topPx: 8, bottomPx: 8, leftPx: 8, rightPx: 8 }
+        ),
+        featherEdges(
+          await sharp(fornoParts.wheatRight)
+            .resize(sprigW, sprigH, { fit: "contain", background: { ...canvasBgRgb, alpha: 0 } })
+            .png()
+            .toBuffer(),
+          { topPx: 8, bottomPx: 8, leftPx: 8, rightPx: 8 }
+        ),
+      ]);
+      overlays.push(
+        { input: wL, left: mob.x + 12, top: feedInfoTop + 18 },
+        { input: wR, left: mob.x + mob.width - sprigW - 12, top: feedInfoTop + 18 }
+      );
+    }
+
+    await placeBrandInfoInBox(
+      {
+        x: mob.x + (estiloVisual === "classico" ? 84 : 24),
+        y: feedInfoTop,
+        width: mob.width - (estiloVisual === "classico" ? 168 : 48),
+        height: feedInfoH,
+      },
+      "vertical-highlighted"
     );
-    overlays.push({ input: photoTop, left: 0, top: 0 });
   } else {
-    const photoTopCls = await featherAndTintLayer(
-      await sharp(fornoParts.breadSoftScene)
-        .resize(W, topPhotoH, { fit: "cover", position: "centre" })
-        .modulate({ brightness: 1.18, saturation: 0.85 })
-        .blur(0.85)
-        .png()
-        .toBuffer(),
-      { topPx: 40, bottomPx: Math.round(topPhotoH * 0.42), leftPx: 28, rightPx: 28, opacity: 0.42 }
-    );
-    overlays.push({ input: photoTopCls, left: 0, top: 0 });
-    overlays.push(...(await makeClassicDoubleBorderOverlays(W, H, 26, borderColorRgb, 0.5)));
-  }
-
-  const feedInfoTop = Math.max(mob.y + 12, topPhotoH - Math.round(H * 0.04));
-  const feedInfoH = Math.max(300, mob.y + mob.height - feedInfoTop - 16);
-
-  // Nos clássicos verticais, adornos de espiga simétricos estritamente dentro da zona móvel
-  if (estiloVisual === "classico" && !isCustomBrand && fornoParts.wheatLeft && fornoParts.wheatRight) {
-    const sprigH = Math.round(feedInfoH * 0.58);
-    const sprigW = Math.round(sprigH * 0.42);
-    const [wL, wR] = await Promise.all([
-      featherEdges(
-        await sharp(fornoParts.wheatLeft)
-          .resize(sprigW, sprigH, { fit: "contain", background: { ...canvasBgRgb, alpha: 0 } })
-          .png()
-          .toBuffer(),
-        { topPx: 8, bottomPx: 8, leftPx: 8, rightPx: 8 }
-      ),
-      featherEdges(
-        await sharp(fornoParts.wheatRight)
-          .resize(sprigW, sprigH, { fit: "contain", background: { ...canvasBgRgb, alpha: 0 } })
-          .png()
-          .toBuffer(),
-        { topPx: 8, bottomPx: 8, leftPx: 8, rightPx: 8 }
-      ),
-    ]);
-    overlays.push(
-      { input: wL, left: mob.x + 12, top: feedInfoTop + 18 },
-      { input: wR, left: mob.x + mob.width - sprigW - 12, top: feedInfoTop + 18 }
+    if (estiloVisual === "classico") {
+      overlays.push(...(await makeClassicDoubleBorderOverlays(W, H, 26, borderColorRgb, 0.48)));
+    }
+    const feedPadY = Math.round(mob.height * 0.12);
+    await placeBrandInfoInBox(
+      {
+        x: mob.x + 32,
+        y: mob.y + feedPadY,
+        width: mob.width - 64,
+        height: mob.height - feedPadY * 2,
+      },
+      "vertical-highlighted"
     );
   }
-
-  await placeBrandInfoInBox(
-    {
-      x: mob.x + (estiloVisual === "classico" ? 84 : 24),
-      y: feedInfoTop,
-      width: mob.width - (estiloVisual === "classico" ? 168 : 48),
-      height: feedInfoH,
-    },
-    "vertical-highlighted"
-  );
 
   const finalBuf = await sharp({
     create: { width: W, height: H, channels: 4, background: { ...canvasBgRgb, alpha: 1 } },
@@ -1656,7 +2458,7 @@ async function generateSocialArtworkFromApprovedRefs(
 
   return {
     buffer: finalBuf,
-    fixtureNome: `docs/referencias/ia-aprovada/${masterName}`,
+    fixtureNome: returnFixtureNome,
     adapted,
   };
 }

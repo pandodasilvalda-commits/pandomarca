@@ -14,13 +14,14 @@ import {
 } from "../formats";
 import { getSatoriFontsForPair } from "../fonts";
 import {
-  contrastRatio,
   getContrastingTextHex,
   hexToRgb,
   mixHex,
-  rgbToHex,
-  rgbToHsl,
 } from "../palette";
+import {
+  createWhiteKnockoutLogo,
+  ensureWordmarkContrastOnDarkBg,
+} from "../logo-surface";
 import type { CoverLayoutId } from "../capas/catalog";
 import {
   gerarPecaRedeSocialComAuditoria,
@@ -29,205 +30,12 @@ import {
 } from "../imagem";
 import { adaptVectorSvgForSurface } from "../vetorizar";
 
+export { createWhiteKnockoutLogo };
+
 const h = React.createElement;
 
 export function mmToPt(mm: number): number {
   return (mm * 72) / 25.4;
-}
-
-/**
- * Converte píxeis do wordmark por aglomerados de cor reais (nunca píxel-a-píxel isolado)
- * para eliminar qualquer efeito salpicado em letras coloridas ou com anti-aliasing em fundos escuros.
- */
-async function convertDarkSurfaceWordmarkClustered(
-  data: Buffer | Uint8Array,
-  w: number,
-  hPx: number,
-  splitX: number,
-  surfaceHex: string
-): Promise<Uint8Array> {
-  const out = new Uint8Array(data);
-  const clusters: {
-    rSum: number;
-    gSum: number;
-    bSum: number;
-    count: number;
-    target?: [number, number, number];
-  }[] = [];
-
-  for (let y = 0; y < hPx; y += 2) {
-    for (let x = splitX; x < w; x += 2) {
-      const idx = (y * w + x) * 4;
-      if (out[idx + 3] < 195) continue;
-      const r = out[idx];
-      const g = out[idx + 1];
-      const b = out[idx + 2];
-      const hit = clusters.find(
-        (c) =>
-          Math.hypot(r - c.rSum / c.count, g - c.gSum / c.count, b - c.bSum / c.count) < 42
-      );
-      if (hit) {
-        hit.rSum += r;
-        hit.gSum += g;
-        hit.bSum += b;
-        hit.count++;
-      } else if (clusters.length < 8) {
-        clusters.push({ rSum: r, gSum: g, bSum: b, count: 1 });
-      }
-    }
-  }
-
-  for (const c of clusters) {
-    const r = Math.round(c.rSum / c.count);
-    const g = Math.round(c.gSum / c.count);
-    const b = Math.round(c.bSum / c.count);
-    const hex = rgbToHex({ r, g, b });
-    const hsl = rgbToHsl({ r, g, b });
-    const ratio = contrastRatio(hex, surfaceHex);
-    if (ratio >= 4.7 && hsl.l >= 50) {
-      c.target = [r, g, b];
-    } else if (hsl.s >= 32 && hsl.l >= 26) {
-      c.target = hsl.h >= 85 && hsl.h <= 255 ? [226, 240, 232] : [244, 184, 88];
-    } else {
-      c.target = [250, 248, 245];
-    }
-  }
-
-  if (clusters.length > 0) {
-    for (let y = 0; y < hPx; y++) {
-      for (let x = splitX; x < w; x++) {
-        const idx = (y * w + x) * 4;
-        if (out[idx + 3] < 10) continue;
-        const r = out[idx];
-        const g = out[idx + 1];
-        const b = out[idx + 2];
-        let best = clusters[0];
-        let bestD = Infinity;
-        for (const c of clusters) {
-          const d = Math.hypot(
-            r - c.rSum / c.count,
-            g - c.gSum / c.count,
-            b - c.bSum / c.count
-          );
-          if (d < bestD) {
-            bestD = d;
-            best = c;
-          }
-        }
-        if (best.target) {
-          out[idx] = best.target[0];
-          out[idx + 1] = best.target[1];
-          out[idx + 2] = best.target[2];
-        }
-      }
-    }
-  }
-
-  // No símbolo à esquerda, levanta apenas eventual pedestal horizontal escuro na base (y >= 77%)
-  if (splitX > 0) {
-    let minSymY = hPx;
-    let maxSymY = 0;
-    for (let y = 0; y < hPx; y++) {
-      for (let x = 0; x < splitX; x++) {
-        if (out[(y * w + x) * 4 + 3] >= 128) {
-          if (y < minSymY) minSymY = y;
-          if (y > maxSymY) maxSymY = y;
-        }
-      }
-    }
-    const pedestalY =
-      maxSymY > minSymY ? minSymY + Math.round((maxSymY - minSymY) * 0.77) : Math.round(hPx * 0.77);
-    for (let y = pedestalY; y < hPx; y++) {
-      for (let x = 0; x < splitX; x++) {
-        const idx = (y * w + x) * 4;
-        if (out[idx + 3] < 110) continue;
-        const hsl = rgbToHsl({ r: out[idx], g: out[idx + 1], b: out[idx + 2] });
-        if (hsl.l < 26) {
-          out[idx] = 250;
-          out[idx + 1] = 248;
-          out[idx + 2] = 245;
-        }
-      }
-    }
-  }
-
-  return out;
-}
-
-/**
- * Gera a versão do logótipo para fundos escuros:
- * - Se o logótipo for escuro e quase sem cor (isDarkMonochrome), passa o desenho a branco (#FAF8F5).
- * - Se o logótipo for colorido horizontal, preserva a cavidade do símbolo à esquerda (levantando o pedestal)
- *   e converte por aglomerados uniformes o texto escuro em #FAF8F5 e terracota escuro em #F4B858.
- */
-export async function createWhiteKnockoutLogo(
-  processedPng: Buffer,
-  isDarkMonochrome = false
-): Promise<Buffer> {
-  const { data, info } = await sharp(processedPng)
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
-  const w = info.width;
-  const hPx = info.height;
-
-  if (isDarkMonochrome) {
-    const out = new Uint8Array(data.length);
-    for (let i = 0; i < data.length; i += 4) {
-      const a = data[i + 3];
-      if (a < 10) {
-        out[i] = data[i];
-        out[i + 1] = data[i + 1];
-        out[i + 2] = data[i + 2];
-        out[i + 3] = a;
-      } else {
-        out[i] = 250;
-        out[i + 1] = 248;
-        out[i + 2] = 245;
-        out[i + 3] = a;
-      }
-    }
-    return sharp(Buffer.from(out.buffer), {
-      raw: { width: w, height: hPx, channels: 4 },
-    })
-      .png()
-      .toBuffer();
-  }
-
-  let wordmarkStartX = 0;
-  if (w > hPx * 1.35) {
-    wordmarkStartX = Math.min(w, Math.round(hPx * 0.95));
-    const minSearchX = Math.round(w * 0.22);
-    const maxSearchX = Math.min(w - 10, Math.round(w * 0.68));
-    let seenOpaqueLeft = false;
-    for (let x = minSearchX; x <= maxSearchX; x++) {
-      let colOpaque = 0;
-      for (let y = 0; y < hPx; y++) {
-        if (data[(y * w + x) * 4 + 3] > 24) colOpaque++;
-      }
-      if (colOpaque > 0) {
-        seenOpaqueLeft = true;
-      } else if (seenOpaqueLeft && colOpaque === 0) {
-        wordmarkStartX = x;
-        break;
-      }
-    }
-  }
-
-  const out = await convertDarkSurfaceWordmarkClustered(
-    data,
-    w,
-    hPx,
-    wordmarkStartX,
-    "#1E100A"
-  );
-
-  return sharp(Buffer.from(out.buffer), {
-    raw: { width: w, height: hPx, channels: 4 },
-  })
-    .png()
-    .toBuffer();
 }
 
 async function trimLogoWithRatio(pngBuffer: Buffer): Promise<{
@@ -313,22 +121,29 @@ export async function extractIconSquare(
   // 1) Se o logótipo for horizontal (símbolo à esquerda + texto à direita), procura a coluna transparente
   if (w > hPx * 1.35) {
     let splitX = Math.min(w, Math.round(hPx * 0.95));
-    const minSearchX = Math.round(w * 0.22);
+    const minSearchX = Math.round(w * 0.16);
     const maxSearchX = Math.min(w - 10, Math.round(w * 0.68));
 
     let seenOpaqueLeft = false;
+    let gapStart = -1;
     for (let x = minSearchX; x <= maxSearchX; x++) {
       let colOpaque = 0;
       for (let y = 0; y < hPx; y++) {
         const a = data[(y * w + x) * 4 + 3];
         if (a > 24) colOpaque++;
       }
-      if (colOpaque > 0) {
+      if (colOpaque > 1) {
         seenOpaqueLeft = true;
-      } else if (seenOpaqueLeft && colOpaque === 0) {
-        splitX = x;
-        break;
+        if (gapStart >= 0) {
+          splitX = Math.round((gapStart + x) / 2);
+          break;
+        }
+      } else if (seenOpaqueLeft && gapStart < 0) {
+        gapStart = x;
       }
+    }
+    if (gapStart >= 0 && splitX === Math.min(w, Math.round(hPx * 0.95))) {
+      splitX = gapStart;
     }
 
     try {
@@ -716,52 +531,6 @@ export async function renderSolidSurfaceBuffer(params: {
     .toBuffer();
 }
 
-async function ensureWordmarkContrastOnDarkBg(
-  pngBuffer: Buffer,
-  bgHex: string
-): Promise<Buffer> {
-  const { data, info } = await sharp(pngBuffer)
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
-  const w = info.width;
-  const hPx = info.height;
-  if (w <= hPx * 1.35) return pngBuffer;
-
-  let wordmarkStartX = -1;
-  const minSearchX = Math.round(w * 0.18);
-  const maxSearchX = Math.min(w - 6, Math.round(w * 0.65));
-  let seenOpaqueLeft = false;
-  for (let x = minSearchX; x <= maxSearchX; x++) {
-    let colOpaque = 0;
-    for (let y = 0; y < hPx; y++) {
-      if (data[(y * w + x) * 4 + 3] > 20) colOpaque++;
-    }
-    if (colOpaque > 0) {
-      seenOpaqueLeft = true;
-    } else if (seenOpaqueLeft && colOpaque === 0) {
-      wordmarkStartX = x;
-      break;
-    }
-  }
-  if (wordmarkStartX <= 0) return pngBuffer;
-
-  const out = await convertDarkSurfaceWordmarkClustered(
-    data,
-    w,
-    hPx,
-    wordmarkStartX,
-    bgHex
-  );
-
-  return sharp(Buffer.from(out.buffer), {
-    raw: { width: w, height: hPx, channels: 4 },
-  })
-    .png()
-    .toBuffer();
-}
-
 async function prepareFittedLogoElement(params: {
   isDarkBg: boolean;
   processedPng: Buffer;
@@ -844,6 +613,7 @@ export async function renderRedeSocialPiece(params: {
   processedPng: Buffer;
   logoDna?: LogoVisualDna;
   style?: StyleId;
+  fontPairId?: FontPairId;
   sessaoId?: string;
   bypassCache?: boolean;
 }): Promise<PecaGeradaIA> {
@@ -855,6 +625,7 @@ export async function renderRedeSocialPiece(params: {
     logotipoReferencia: params.processedPng,
     logotipoDna: params.logoDna,
     estiloPeca: params.style,
+    fontPairId: params.fontPairId,
     sessaoId: params.sessaoId,
     bypassCache: params.bypassCache,
   });
@@ -885,6 +656,7 @@ export async function renderCoverPiece(params: {
     processedPng: params.processedPng,
     logoDna: params.logoDna,
     style: params.style,
+    fontPairId: params.fontPairId,
     sessaoId: params.sessaoId,
   });
   return peca.buffer;
@@ -913,6 +685,7 @@ export async function renderInstagramPost(params: {
     processedPng: params.processedPng,
     logoDna: params.logoDna,
     style: params.style,
+    fontPairId: params.fontPairId,
     sessaoId: params.sessaoId,
   });
   return peca.buffer;
@@ -940,6 +713,7 @@ export async function renderInstagramStory(params: {
     processedPng: params.processedPng,
     logoDna: params.logoDna,
     style: params.style,
+    fontPairId: params.fontPairId,
     sessaoId: params.sessaoId,
   });
   return peca.buffer;
@@ -977,7 +751,12 @@ export function renderEmailSignatureHtml(params: {
 
   const nifClean = (dados.nif || "").trim();
   const websiteClean = (dados.website || "").trim();
-  const websiteDisplay = websiteClean.replace(/^https?:\/\//, "");
+  const websiteDisplay = websiteClean.replace(/^https?:\/\//i, "");
+  const websiteHref = websiteClean
+    ? /^https?:\/\//i.test(websiteClean)
+      ? websiteClean
+      : `https://${websiteClean}`
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="pt-PT">
@@ -986,13 +765,13 @@ export function renderEmailSignatureHtml(params: {
   <title>Assinatura de Email — ${escapeHtml(dados.nome)}</title>
 </head>
 <body style="margin: 0; padding: 16px; background-color: #ffffff; font-family: '${pair.tituloFamily}', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; max-width: 560px; width: 100%; background-color: ${cardBg}; border: 1px solid ${borderCol}; border-left: 5px solid ${headerBandBg};">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; max-width: 580px; width: 100%; background-color: ${cardBg}; border: 1px solid ${borderCol}; border-left: 5px solid ${headerBandBg};">
     <tr>
       <td style="padding: 18px 20px; vertical-align: top;">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%;">
           <tr>
-            <td style="vertical-align: top; padding-right: 18px; width: 140px;">
-              <img src="logotipo-assinatura.png" alt="${escapeHtml(dados.nome)}" height="64" style="display: block; height: 64px; width: auto; max-width: 180px; border: 0;" />
+            <td style="vertical-align: middle; padding-right: 18px; white-space: nowrap;">
+              <img src="logotipo-assinatura.png" alt="${escapeHtml(dados.nome)}" height="64" style="display: block; height: 64px; width: auto; max-width: 240px; border: 0;" />
             </td>
             <td style="vertical-align: top;">
               ${
@@ -1035,8 +814,8 @@ export function renderEmailSignatureHtml(params: {
                   : ""
               }
               ${
-                websiteClean
-                  ? `<span style="margin-right: 12px;"><strong>Web:</strong> <a href="${escapeHtml(websiteClean)}" style="color: ${accentCol}; text-decoration: none;">${escapeHtml(websiteDisplay)}</a></span>`
+                websiteHref
+                  ? `<span style="margin-right: 12px;"><strong>Web:</strong> <a href="${escapeHtml(websiteHref)}" style="color: ${accentCol}; text-decoration: none;">${escapeHtml(websiteDisplay)}</a></span>`
                   : ""
               }
               ${
@@ -1293,12 +1072,27 @@ export async function renderBusinessCardPdf(params: {
               },
               dados.cargo
             )
+          : !dados.pessoa && dados.slogan
+          ? h(
+              "div",
+              {
+                style: {
+                  fontFamily: pair.textoFamily,
+                  fontWeight: 400,
+                  fontSize: "20px",
+                  color: paleta.neutro.hex,
+                  marginTop: "6px",
+                  maxWidth: "560px",
+                },
+              },
+              dados.slogan
+            )
           : null
       ),
       h("img", {
         src: backLogoSrc,
-        width: 140,
-        height: 85,
+        width: !dados.simbolo ? 240 : 140,
+        height: !dados.simbolo ? 90 : 85,
         style: { objectFit: "contain" },
       })
     ),

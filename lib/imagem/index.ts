@@ -493,6 +493,7 @@ export async function gerarPecaRedeSocialComAuditoria(params: {
   paleta: BrandPalette;
   logotipoReferencia: Buffer;
   logotipoDna?: LogoVisualDna;
+  fontPairId?: import("../formats").FontPairId;
   estiloPeca?: StyleId;
   sessaoId?: string;
   bypassCache?: boolean;
@@ -512,6 +513,7 @@ export async function gerarPecaRedeSocialComAuditoria(params: {
       ? params.dados.sector
       : "restauracao";
   const sectorLabel = SECTORS[sector].rotulo;
+  const resolvedFontPairId = params.fontPairId || SECTORS[sector].parSugerido;
 
   const dna =
     params.logotipoDna ||
@@ -526,12 +528,14 @@ export async function gerarPecaRedeSocialComAuditoria(params: {
   const textosPedidos = buildTextosPedidosParaPeca(params.dados, params.redeId);
 
   const cacheKey = [
-    "comp-v2",
+    "comp-v3",
     params.redeId,
     rede.composicao.disposicao,
     params.estiloVisual,
     tom,
     sector,
+    resolvedFontPairId,
+    params.dados.simbolo ? "1" : "0",
     (params.dados.nome || "").trim().toLowerCase(),
     textosPedidos.join("|"),
     params.paleta.primaria.hex,
@@ -647,6 +651,8 @@ export async function gerarPecaRedeSocialComAuditoria(params: {
     slogan: params.dados.slogan,
     sector,
     tom,
+    fontPairId: resolvedFontPairId,
+    simbolo: params.dados.simbolo,
     estiloVisual: params.estiloVisual,
     estilo: params.estiloVisual === "moderno" ? "moderno" : "classico",
     paleta: params.paleta,
@@ -700,6 +706,7 @@ export async function gerarDuasPropostasVisualMarca(params: {
   paleta: BrandPalette;
   logotipoReferencia: Buffer;
   logotipoDna?: LogoVisualDna;
+  fontPairId?: import("../formats").FontPairId;
   sessaoId?: string;
   bypassCache?: boolean;
 }): Promise<[PecaGeradaIA, PecaGeradaIA]> {
@@ -711,6 +718,7 @@ export async function gerarDuasPropostasVisualMarca(params: {
       paleta: params.paleta,
       logotipoReferencia: params.logotipoReferencia,
       logotipoDna: params.logotipoDna,
+      fontPairId: params.fontPairId,
       sessaoId: params.sessaoId,
       bypassCache: params.bypassCache,
     }),
@@ -721,6 +729,7 @@ export async function gerarDuasPropostasVisualMarca(params: {
       paleta: params.paleta,
       logotipoReferencia: params.logotipoReferencia,
       logotipoDna: params.logotipoDna,
+      fontPairId: params.fontPairId,
       sessaoId: params.sessaoId,
       bypassCache: params.bypassCache,
     }),

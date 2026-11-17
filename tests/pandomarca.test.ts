@@ -959,3 +959,174 @@ describe("Composição própria por formato, camadas, hierarquia de corte e zona
     limparOrcamentoKit(sessId);
   });
 });
+
+describe("PandoWeb Entrada B — Logótipo real existente sem redesenho e modo falso isolado", () => {
+  it("extrai paleta azul elétrica do logótipo PandoWeb e gera 38 ficheiros intactos sem fugas do ensaio anterior", async () => {
+    const pandoLogoPath = path.resolve(
+      process.cwd(),
+      "docs/referencias/pandoweb/pandoweb-logo-v2.png"
+    );
+    expect(fs.existsSync(pandoLogoPath)).toBe(true);
+    const pandoBuf = fs.readFileSync(pandoLogoPath);
+
+    const { meta, processedPng } = await analyzeAndStoreLogo({
+      buffer: pandoBuf,
+      filename: "pandoweb-logo-v2.png",
+      mimeType: "image/png",
+      entrada: "B",
+    });
+
+    expect(meta.originalFormat).toBe("png");
+    expect(meta.lowQuality).toBe(false);
+    expect(meta.isDarkMonochrome).toBe(false);
+    // Cor primária extraída deve corresponder ao azul elétrico da marca (#0078FC / canal azul dominante)
+    expect(meta.paletaExtraida.primaria.rgb.b).toBeGreaterThan(
+      meta.paletaExtraida.primaria.rgb.r + 70
+    );
+
+    const proposals = generateFourProposals(meta.paletaExtraida, "tecnologia");
+    expect(proposals[0].fontPairId).toBe("tecnica");
+
+    const dadosPandoWeb = {
+      nome: "PandoWeb",
+      sector: "tecnologia" as const,
+      tom: "tecnico" as const,
+      simbolo: false,
+      slogan: "Soluções Digitais para Empresas",
+      pessoa: "",
+      cargo: "",
+      email: "geral@pandoweb.pt",
+      telefone: "",
+      website: "pandoweb.pt",
+      morada: "Torre de Moncorvo, Trás-os-Montes",
+      nif: "",
+      servicos: "",
+    };
+
+    const sessId = `teste_pandoweb_b_${Date.now()}`;
+    limparOrcamentoKit(sessId);
+
+    const logoDna = buildLogoVisualDna({
+      nome: dadosPandoWeb.nome,
+      sector: dadosPandoWeb.sector,
+      tom: "tecnico",
+      paleta: meta.paletaExtraida,
+      aspectRatio: meta.width / Math.max(1, meta.height),
+      isDarkMonochrome: meta.isDarkMonochrome,
+    });
+
+    // Compara 2 propostas visuais por formato crítico e verifica isolamento contra Forno
+    for (const redeId of [
+      "fb-capa",
+      "fb-perfil",
+      "li-capa-pessoal",
+      "li-capa-empresa",
+      "yt-banner",
+      "x-cabecalho",
+      "gb-capa",
+      "ig-publicacao-1080x1350",
+      "ig-story",
+    ] as const) {
+      const [mod, cls] = await gerarDuasPropostasVisualMarca({
+        redeId,
+        dados: dadosPandoWeb,
+        paleta: proposals[0].paleta,
+        logotipoReferencia: processedPng,
+        logotipoDna: logoDna,
+        fontPairId: "tecnica",
+        sessaoId: sessId,
+      });
+
+      expect(mod.fixtureNome).toBe("referencia-cliente");
+      expect(cls.fixtureNome).toBe("referencia-cliente");
+      expect(mod.audit.valida, `PandoWeb moderno em ${redeId}: ${mod.audit.motivos.join("; ")}`).toBe(true);
+      expect(cls.audit.valida, `PandoWeb clássico em ${redeId}: ${cls.audit.motivos.join("; ")}`).toBe(true);
+      expect(Buffer.compare(mod.buffer, cls.buffer)).not.toBe(0);
+    }
+
+    // Gera kit completo (38 ficheiros) com estilo moderno em camadas selecionado
+    const kit = await generateFullBrandKit({
+      draftId: meta.id,
+      processedPng,
+      isDarkMonochrome: meta.isDarkMonochrome,
+      dados: dadosPandoWeb,
+      paleta: proposals[0].paleta,
+      fontPairId: "tecnica",
+      kitStyle: "minimal",
+      estiloVisual: "moderno",
+      usarVetorizacaoOpcional: false,
+      logoDna,
+      sessaoId: sessId,
+    });
+
+    expect(kit.meta.zipFilename).toBe("pandomarca-pandoweb.zip");
+    expect(kit.meta.coverArtOrigins?.origemLogo).toBe("logotipo-utilizador");
+    expect(kit.meta.files).toHaveLength(38);
+
+    for (const rede of REDES_SOCIAIS_LIST) {
+      const audit = kit.meta.safeZoneAudits?.[rede.id];
+      const pecaMeta = kit.meta.pecasMetadata?.[rede.id];
+      expect(audit?.precisaRegeneracao, `Auditoria ${rede.id}: ${audit?.motivos.join("; ")}`).toBe(false);
+      expect(pecaMeta?.fixtureNome).toBe("referencia-cliente");
+      expect(pecaMeta?.referenciaLogoUsada).toBe(true);
+    }
+
+    // 1. variantes/icone.png isola APENAS a mascote panda (proporção compacta sem texto «PandoWeb»)
+    const iconeTrimMeta = await sharp(kit.zipFileMap.get("variantes/icone.png")!)
+      .ensureAlpha()
+      .trim({ threshold: 8 })
+      .metadata();
+    const iconAspect =
+      (iconeTrimMeta.width || 1) / Math.max(1, iconeTrimMeta.height || 1);
+    expect(iconAspect).toBeLessThan(1.35);
+
+    // 2. variantes/fundo-escuro.png mantém letras coloridas azuis ("Web"), passa letras pretas para claro
+    // e conserva o contorno escuro natural da mascote
+    const darkVariant = await sharp(kit.zipFileMap.get("variantes/fundo-escuro.png")!)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    let vividBluePixels = 0;
+    let brightWhiteTextPixels = 0;
+    let blackMascotContourPixels = 0;
+    const dData = darkVariant.data;
+    const bgR = dData[0];
+    const bgG = dData[1];
+    const bgB = dData[2];
+    for (let i = 0; i < dData.length; i += 16) {
+      const r = dData[i];
+      const g = dData[i + 1];
+      const b = dData[i + 2];
+      if (Math.hypot(r - bgR, g - bgG, b - bgB) < 12) continue;
+      if (b > r + 60 && b > 140) vividBluePixels++;
+      if (r > 235 && g > 235 && b > 235) brightWhiteTextPixels++;
+      if (r < 22 && g < 22 && b < 22) blackMascotContourPixels++;
+    }
+    expect(vividBluePixels).toBeGreaterThan(200);
+    expect(brightWhiteTextPixels).toBeGreaterThan(400);
+    expect(blackMascotContourPixels).toBeGreaterThan(200);
+
+    // 3. Assinatura HTML, LEIA-ME, manifest e tipografia sem campos inventados nem resíduos da padaria
+    const zip = await JSZip.loadAsync(kit.zipBuffer);
+    const root = "pandomarca-pandoweb/";
+    expect(Object.values(zip.files).filter((f) => !f.dir)).toHaveLength(38);
+
+    const html = await zip.file(`${root}email/assinatura.html`)!.async("string");
+    expect(html).toContain("PandoWeb");
+    expect(html).toContain("Soluções Digitais para Empresas");
+    expect(html).toContain('href="https://pandoweb.pt"');
+    expect(html).toContain("mailto:geral@pandoweb.pt");
+    expect(html).toContain("Torre de Moncorvo, Trás-os-Montes");
+    expect(html).not.toMatch(/Forno da Vilari|fornodavilarica|Marta Queir|Tel\.:|NIF:|padaria|trigo/i);
+
+    const readme = await zip.file(`${root}LEIA-ME.txt`)!.async("string");
+    expect(readme).toContain("PandoWeb");
+    expect(readme).not.toMatch(/Forno da Vilari/i);
+
+    const tiposTxt = await zip.file(`${root}tipografia/tipos.txt`)!.async("string");
+    expect(tiposTxt).toContain("Técnica");
+
+    limparOrcamentoKit(sessId);
+  });
+});
+

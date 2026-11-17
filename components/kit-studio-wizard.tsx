@@ -896,6 +896,7 @@ export function KitStudioWizard() {
               papel: customPalette.papel.hex,
               tinta: customPalette.tinta.hex,
             },
+            fontPairId: selectedFontPair,
             redeId: targetRede,
             regenerar: Boolean(opts?.regenerar),
           }),
@@ -933,6 +934,7 @@ export function KitStudioWizard() {
       customPalette.tinta.hex,
       dados,
       draft?.id,
+      selectedFontPair,
       setFailure,
       tom,
     ]
@@ -959,6 +961,7 @@ export function KitStudioWizard() {
             papel: customPalette.papel.hex,
             tinta: customPalette.tinta.hex,
           },
+          fontPairId: selectedFontPair,
           redeId: requestedRede,
           apenasUmEstilo: true,
           estiloVisual: targetEstilo,

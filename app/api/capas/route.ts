@@ -10,6 +10,8 @@ import {
 import {
   BrandData,
   BrandPaletteHex,
+  FONT_PAIRS,
+  FontPairId,
   SECTORS,
   SectorId,
 } from "@/lib/formats";
@@ -126,6 +128,10 @@ export async function POST(req: NextRequest) {
       typeof body.redeId === "string" && isRedeSocialId(body.redeId)
         ? body.redeId
         : "fb-capa";
+    const fontPairId: FontPairId =
+      typeof body.fontPairId === "string" && body.fontPairId in FONT_PAIRS
+        ? (body.fontPairId as FontPairId)
+        : SECTORS[sector].parSugerido;
     const bypassCache = Boolean(body.regenerar);
 
     let pecas: PecaGeradaIA[];
@@ -140,6 +146,7 @@ export async function POST(req: NextRequest) {
         paleta,
         logotipoReferencia: loaded.processedPng,
         logotipoDna: loaded.meta.logoDna,
+        fontPairId,
         sessaoId: loaded.meta.sessaoImagemId,
         bypassCache: true,
       });
@@ -151,6 +158,7 @@ export async function POST(req: NextRequest) {
         paleta,
         logotipoReferencia: loaded.processedPng,
         logotipoDna: loaded.meta.logoDna,
+        fontPairId,
         sessaoId: loaded.meta.sessaoImagemId,
         bypassCache,
       });

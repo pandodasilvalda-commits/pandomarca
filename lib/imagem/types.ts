@@ -4,7 +4,7 @@ import type {
   TomDaMarca,
 } from "../config/redes-sociais";
 import type { SafeZoneAuditResult } from "../capas/safe-zone";
-import type { BrandPalette, BrandPaletteHex, SectorId } from "../formats";
+import type { BrandPalette, BrandPaletteHex, FontPairId, SectorId } from "../formats";
 
 export type { TomDaMarca };
 
@@ -35,6 +35,7 @@ export interface LogoVisualDna {
   paletaDescricao: string;
   paletaHex: BrandPaletteHex;
   fixtureLogoOrigem?: string;
+  isDarkMonochrome?: boolean;
 }
 
 export interface ImagemContexto {
@@ -42,6 +43,7 @@ export interface ImagemContexto {
   slogan?: string;
   sector?: SectorId;
   tom?: TomDaMarca;
+  fontPairId?: FontPairId;
   estilo?: "classico" | "moderno" | "editorial";
   estiloVisual?: "moderno" | "classico";
   ronda?: number;
