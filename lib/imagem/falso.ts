@@ -18,7 +18,7 @@ import {
   SECTORS,
   type SectorId,
 } from "../formats";
-import { buildBrandPalette, contrastRatio, hexToRgb, mixHex } from "../palette";
+import { buildBrandPalette, contrastRatio, hexToRgb, mixHex, rgbToHex } from "../palette";
 import { adaptLogoForDarkSurface } from "../logo-surface";
 import { vetorizarImagemLocal } from "../vetorizar";
 import {
@@ -1803,11 +1803,18 @@ async function buildCustomBrandAmbientBackdrop(opts: {
   const cSec = hexToRgb(paleta.secundaria.hex);
   const cPapel = hexToRgb(paleta.papel.hex);
 
-  const darkHexPre = mixHex(paleta.tinta.hex, paleta.secundaria.hex, 0.42);
+  const darkHexPre = mixHex(paleta.tinta.hex, paleta.primaria.hex, 0.18);
   const darkPreRgb = hexToRgb(darkHexPre);
-  const darkPreLum = 0.299 * darkPreRgb.r + 0.587 * darkPreRgb.g + 0.114 * darkPreRgb.b;
+  const darkPreLum =
+    0.299 * darkPreRgb.r + 0.587 * darkPreRgb.g + 0.114 * darkPreRgb.b;
   const darkBaseRgb =
-    darkPreLum > 92 ? mixRgbChannels(darkPreRgb, { r: 15, g: 23, b: 42 }, 0.6) : darkPreRgb;
+    darkPreLum > 46
+      ? {
+          r: Math.max(8, Math.round((darkPreRgb.r * 40) / darkPreLum)),
+          g: Math.max(10, Math.round((darkPreRgb.g * 40) / darkPreLum)),
+          b: Math.max(12, Math.round((darkPreRgb.b * 40) / darkPreLum)),
+        }
+      : darkPreRgb;
   const lightBaseRgb = cPapel;
 
   const canvasBgRgb = estiloVisual === "moderno" ? darkBaseRgb : lightBaseRgb;
@@ -1923,8 +1930,8 @@ async function buildCustomBrandAmbientBackdrop(opts: {
 
       if (estiloVisual === "moderno") {
         const sweep = Math.max(0, Math.min(1, 0.55 * u + 0.35 * (1 - v)));
-        const secShift = mixRgbChannels(darkBaseRgb, cSec, 0.42);
-        const baseSw = mixRgbChannels(darkBaseRgb, secShift, sweep * 0.65);
+        const primShift = mixRgbChannels(darkBaseRgb, cPrim, 0.22);
+        const baseSw = mixRgbChannels(darkBaseRgb, primShift, sweep * 0.65);
         r = baseSw.r;
         g = baseSw.g;
         b = baseSw.b;
@@ -2144,11 +2151,17 @@ async function renderCustomContactPill(opts: {
   const { pair, fonts } = getSatoriFontsForPair(resolvedPairId);
 
   const isDark = opts.estiloVisual === "moderno";
-  const baseDarkHex = mixHex(opts.paleta.tinta.hex, opts.paleta.secundaria.hex, 0.25);
+  const baseDarkHex = mixHex(opts.paleta.tinta.hex, opts.paleta.primaria.hex, 0.16);
   const darkRgb = hexToRgb(baseDarkHex);
   const darkLuma = 0.299 * darkRgb.r + 0.587 * darkRgb.g + 0.114 * darkRgb.b;
   const safeDarkRgb =
-    darkLuma > 75 ? mixRgbChannels(darkRgb, { r: 12, g: 18, b: 30 }, 0.65) : darkRgb;
+    darkLuma > 46
+      ? {
+          r: Math.max(8, Math.round((darkRgb.r * 38) / darkLuma)),
+          g: Math.max(10, Math.round((darkRgb.g * 38) / darkLuma)),
+          b: Math.max(12, Math.round((darkRgb.b * 38) / darkLuma)),
+        }
+      : darkRgb;
 
   const bg = isDark
     ? `rgba(${safeDarkRgb.r}, ${safeDarkRgb.g}, ${safeDarkRgb.b}, 0.90)`
@@ -2456,13 +2469,8 @@ async function generateSocialArtworkFromApprovedRefs(
       const pillReservedH = pill ? pill.height + gapPill : 0;
       const logoSlotH = Math.max(48, box.height - pillReservedH);
 
-      const darkSurfaceHex = mixHex(
-        customPaletaResolved.tinta.hex,
-        customPaletaResolved.secundaria.hex,
-        0.42
-      );
-      const needsDarkAdaptation =
-        estiloVisual === "moderno" && customStats.darkFraction >= 0.08;
+      const darkSurfaceHex = rgbToHex(canvasBgRgb);
+      const needsDarkAdaptation = estiloVisual === "moderno";
       let darkAdapted: {
         buffer: Buffer;
         appliedKnockout: boolean;
@@ -2477,7 +2485,9 @@ async function generateSocialArtworkFromApprovedRefs(
       }
 
       const needDarkFallbackPlate =
-        needsDarkAdaptation && !(darkAdapted?.appliedKnockout);
+        estiloVisual === "moderno" &&
+        !(darkAdapted?.appliedKnockout) &&
+        (customStats.darkFraction >= 0.05 || customStats.meanLum < 155);
       const needLightFallbackPlate =
         estiloVisual === "classico" &&
         customStats.brightFraction >= 0.75 &&

@@ -13,7 +13,13 @@ import {
   TONS_DA_MARCA_LIST,
   type TomDaMarca,
 } from "@/lib/config/redes-sociais";
-import { FORMAT_SPECS } from "@/lib/formats";
+import {
+  FONT_PAIRS,
+  FORMAT_SPECS,
+  type FontPairId,
+  resolverParTipograficoMarca,
+} from "@/lib/formats";
+import { getSatoriFontsForPair, verifyAllFontPairAssets } from "@/lib/fonts";
 import {
   signEntitlementCookie,
   verifyAccessCode,
@@ -26,7 +32,7 @@ import {
   contrastRatio,
   generateFourProposals,
 } from "@/lib/palette";
-import { SAMPLE_BRANDS } from "@/lib/samples";
+import { MULTI_TONE_SAMPLE_BRANDS, SAMPLE_BRANDS } from "@/lib/samples";
 import { parseIcoSizes } from "@/lib/generate/ico";
 import { generateFullBrandKit, regenerarPecaDoKit } from "@/lib/generate/kit";
 import { mmToPt } from "@/lib/generate/pieces";
@@ -54,6 +60,10 @@ import {
   MAX_VECTOR_SVG_BYTES,
   vetorizarImagemLocal,
 } from "@/lib/vetorizar";
+import {
+  adaptLogoForDarkSurface,
+  createWhiteKnockoutLogo,
+} from "@/lib/logo-surface";
 import { loadKitZip } from "@/lib/storage";
 
 beforeAll(() => {
@@ -1129,4 +1139,501 @@ describe("PandoWeb Entrada B — Logótipo real existente sem redesenho e modo f
     limparOrcamentoKit(sessId);
   });
 });
+
+async function measureFbForegroundLeftnessForTest(fbCapaBuf: Buffer): Promise<{
+  centroidX: number;
+  maxActiveX: number;
+  leftMassRatio: number;
+}> {
+  const { data, info } = await sharp(fbCapaBuf)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const W = info.width;
+  let sumW = 0;
+  let sumWX = 0;
+  let leftMass = 0;
+  let maxActiveX = 0;
+
+  for (let y = 50; y <= 375; y += 2) {
+    for (let x = 290; x <= 1350; x += 2) {
+      const i = (y * W + x) * 4;
+      const ir = (y * W + (x + 2)) * 4;
+      const ib = ((y + 2) * W + x) * 4;
+      const gx =
+        Math.abs(data[i] - data[ir]) +
+        Math.abs(data[i + 1] - data[ir + 1]) +
+        Math.abs(data[i + 2] - data[ir + 2]);
+      const gy =
+        Math.abs(data[i] - data[ib]) +
+        Math.abs(data[i + 1] - data[ib + 1]) +
+        Math.abs(data[i + 2] - data[ib + 2]);
+      const edge = gx + gy;
+      if (edge > 28) {
+        sumW += edge;
+        sumWX += edge * x;
+        if (x < W / 2) leftMass += edge;
+        if (x > maxActiveX) maxActiveX = x;
+      }
+    }
+  }
+  return {
+    centroidX: sumW > 0 ? Math.round(sumWX / sumW) : Math.round(W / 2),
+    maxActiveX,
+    leftMassRatio: sumW > 0 ? Number((leftMass / sumW).toFixed(3)) : 0,
+  };
+}
+
+async function measureLowerPillBandHeightForTest(
+  imgBuf: Buffer,
+  yMin: number,
+  yMax: number
+): Promise<number> {
+  const { data, info } = await sharp(imgBuf)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const W = info.width;
+  const rowContrast: number[] = [];
+  for (let y = yMin; y <= Math.min(yMax, info.height - 2); y++) {
+    let transitions = 0;
+    for (let x = 140; x <= W - 142; x += 2) {
+      const i = (y * W + x) * 4;
+      const j = (y * W + x + 2) * 4;
+      const lumA = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      const lumB = 0.299 * data[j] + 0.587 * data[j + 1] + 0.114 * data[j + 2];
+      if (Math.abs(lumA - lumB) > 40) transitions++;
+    }
+    rowContrast.push(transitions);
+  }
+
+  const bands: { start: number; end: number }[] = [];
+  let inBand = false;
+  let bandStart = 0;
+  let quietCount = 0;
+  for (let idx = 0; idx < rowContrast.length; idx++) {
+    if (rowContrast[idx] >= 2) {
+      if (!inBand) {
+        inBand = true;
+        bandStart = yMin + idx;
+      }
+      quietCount = 0;
+    } else if (inBand) {
+      quietCount++;
+      if (quietCount >= 22) {
+        bands.push({ start: bandStart, end: yMin + idx - quietCount });
+        inBand = false;
+      }
+    }
+  }
+  if (inBand) {
+    bands.push({ start: bandStart, end: yMin + rowContrast.length - 1 });
+  }
+  const last = bands[bands.length - 1];
+  return last ? Math.max(0, last.end - last.start + 1) : 0;
+}
+
+describe("Tipografia adaptativa, legibilidade móvel/FB e multi-marca Entradas A/B (msg9)", () => {
+  it("verifica todos os 6 pares FONT_PAIRS com pesos 400–800 locais e seleção genérica por tom/sector", () => {
+    const assetCheck = verifyAllFontPairAssets();
+    expect(assetCheck.ok, `Fontes em falta: ${assetCheck.missing.join(", ")}`).toBe(true);
+    expect(assetCheck.pairsChecked).toHaveLength(6);
+
+    for (const pairId of Object.keys(FONT_PAIRS) as FontPairId[]) {
+      const spec = FONT_PAIRS[pairId];
+      const { pair, fonts } = getSatoriFontsForPair(pairId);
+      expect(pair.id).toBe(pairId);
+
+      const titleWeights = new Set(
+        fonts.filter((f) => f.name === pair.tituloFamily).map((f) => f.weight)
+      );
+      const bodyWeights = new Set(
+        fonts.filter((f) => f.name === pair.textoFamily).map((f) => f.weight)
+      );
+      expect(Array.from(titleWeights).sort()).toEqual([400, 500, 600, 700, 800]);
+      expect(Array.from(bodyWeights).sort()).toEqual([400, 500, 600, 700, 800]);
+
+      if (spec.categoria === "sans") {
+        expect(spec.tituloCssFallback).toMatch(/sans-serif/i);
+        expect(spec.textoCssFallback).toMatch(/sans-serif/i);
+        expect(spec.tituloCssFallback).not.toMatch(/Georgia|Times|(?<!sans-)serif/i);
+        expect(spec.textoCssFallback).not.toMatch(/Georgia|Times|(?<!sans-)serif/i);
+      } else if (spec.categoria === "serif") {
+        expect(spec.tituloFamily).toBe("Lora");
+        expect(spec.textoFamily).toBe("Source Serif 4");
+        expect(spec.textoCssFallback).toMatch(/Georgia|serif/);
+      }
+    }
+
+    expect(resolverParTipograficoMarca({ tom: "tecnico", sector: "tecnologia" })).toBe("tecnica");
+    expect(resolverParTipograficoMarca({ tom: "natural", sector: "comercio" })).toBe("clara");
+    expect(
+      resolverParTipograficoMarca({ tom: "tradicional", sector: "restauracao", estiloDirecao: "classico" })
+    ).toBe("classica");
+    expect(resolverParTipograficoMarca({ tom: "tradicional", sector: "saude" })).toBe("confianca");
+    expect(resolverParTipograficoMarca({ tom: "premium", sector: "beleza" })).toBe("editorial");
+  });
+
+  it("assegura PandoWeb sem serifas acidentais, pílulas IG >= 80 px e capa Facebook ancorada à esquerda (< 50%)", async () => {
+    const pandoBuf = fs.readFileSync(
+      path.resolve(process.cwd(), "docs/referencias/pandoweb/pandoweb-logo-v2.png")
+    );
+    const { meta, processedPng } = await analyzeAndStoreLogo({
+      buffer: pandoBuf,
+      filename: "pandoweb-logo-v2.png",
+      mimeType: "image/png",
+      entrada: "B",
+    });
+
+    const props = generateFourProposals(meta.paletaExtraida, "tecnologia", {
+      tom: "tecnico",
+    });
+    expect(props[0].fontPairId).toBe("tecnica");
+
+    const sessId = `teste_msg9_pando_${Date.now()}`;
+    limparOrcamentoKit(sessId);
+
+    const dadosPando = {
+      nome: "PandoWeb",
+      sector: "tecnologia" as const,
+      tom: "tecnico" as const,
+      simbolo: false,
+      slogan: "Soluções Digitais para Empresas",
+      pessoa: "",
+      cargo: "",
+      email: "geral@pandoweb.pt",
+      telefone: "",
+      website: "pandoweb.pt",
+      morada: "Torre de Moncorvo, Trás-os-Montes",
+      nif: "",
+      servicos: "",
+    };
+
+    const kit = await generateFullBrandKit({
+      draftId: meta.id,
+      processedPng,
+      isDarkMonochrome: meta.isDarkMonochrome,
+      dados: dadosPando,
+      paleta: props[0].paleta,
+      fontPairId: props[0].fontPairId,
+      kitStyle: "minimal",
+      estiloVisual: "moderno",
+      usarVetorizacaoOpcional: false,
+      sessaoId: sessId,
+    });
+
+    const zip = await JSZip.loadAsync(kit.zipBuffer);
+    const amostraSvg = await zip.file("pandomarca-pandoweb/paleta/amostra.svg")!.async("string");
+    const tiposTxt = await zip.file("pandomarca-pandoweb/tipografia/tipos.txt")!.async("string");
+    expect(amostraSvg).toContain("Manrope");
+    expect(amostraSvg).toContain("Source Sans 3");
+    expect(amostraSvg).not.toMatch(/Source Serif|Lora|Georgia/i);
+    expect(tiposTxt).toContain("Manrope");
+    expect(tiposTxt).toContain("Source Sans 3");
+    expect(tiposTxt).not.toMatch(/Source Serif 4/i);
+
+    const guiaPrev = kit.allStorageFiles.get("_previews/guia.png");
+    const cartaoPrev = kit.allStorageFiles.get("_previews/cartao.png");
+    expect(guiaPrev && guiaPrev.length > 5000).toBe(true);
+    expect(cartaoPrev && cartaoPrev.length > 5000).toBe(true);
+
+    const fbStats = await measureFbForegroundLeftnessForTest(
+      kit.zipFileMap.get("facebook/capa.png")!
+    );
+    expect(fbStats.centroidX).toBeLessThan(820);
+    expect(fbStats.leftMassRatio).toBeGreaterThanOrEqual(0.95);
+
+    const ig45Band = await measureLowerPillBandHeightForTest(
+      kit.zipFileMap.get("instagram/publicacao-1080x1350.png")!,
+      650,
+      1050
+    );
+    const storyBand = await measureLowerPillBandHeightForTest(
+      kit.zipFileMap.get("instagram/story-1080x1920.png")!,
+      880,
+      1350
+    );
+    expect(ig45Band).toBeGreaterThanOrEqual(80);
+    expect(storyBand).toBeGreaterThanOrEqual(80);
+
+    limparOrcamentoKit(sessId);
+  });
+
+  it("gera kits completos para as 3 marcas multi-tom na Entrada B (sem fugas Forno e proteção de selos/fundos)", async () => {
+    // Primeiro verifica unitariamente proteção de selo escuro preenchido e dark monochrome com recortes brancos interiores
+    const darkMonoSquareWithCutoutSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240">
+      <rect x="20" y="20" width="200" height="200" rx="36" fill="#0F172A"/>
+      <path d="M74 84 H110 V160 H74 Z M132 84 H166 V160 H132 Z" fill="#FFFFFF"/>
+    </svg>`;
+    const darkMonoPng = await sharp(Buffer.from(darkMonoSquareWithCutoutSvg)).png().toBuffer();
+    const darkMonoAdapted = await adaptLogoForDarkSurface(darkMonoPng, true, "#0E1B2E");
+    const darkMonoKnockout = await createWhiteKnockoutLogo(darkMonoPng, true, "#0E1B2E");
+    expect(darkMonoAdapted.appliedKnockout).toBe(true);
+    const dmRaw = await sharp(darkMonoAdapted.buffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const dmkRaw = await sharp(darkMonoKnockout).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    // Pixel exterior do quadrado (x=40,y=120) virou claro; pixel interior branco "V/I" (x=92,y=120) virou escuro da superfície
+    const boxIdx = (120 * dmRaw.info.width + 40) * 4;
+    const cutIdx = (120 * dmRaw.info.width + 92) * 4;
+    expect(dmRaw.data[boxIdx]).toBeGreaterThan(220);
+    expect(dmRaw.data[cutIdx]).toBeLessThan(80);
+    expect(dmkRaw.data[boxIdx]).toBeGreaterThan(220);
+    expect(dmkRaw.data[cutIdx]).toBeLessThan(80);
+
+    for (const id of ["vertice-digital", "quinta-do-alvor", "atelier-terra-viva"] as const) {
+      const brand = MULTI_TONE_SAMPLE_BRANDS[id];
+      const { meta, processedPng } = await analyzeAndStoreLogo({
+        buffer: Buffer.from(brand.svg, "utf8"),
+        filename: `${id}.svg`,
+        mimeType: "image/svg+xml",
+        entrada: "B",
+      });
+
+      const props = generateFourProposals(meta.paletaExtraida, brand.dados.sector, {
+        tom: brand.dados.tom,
+      });
+      expect(props[0].fontPairId, `Par tipográfico esperado para ${id}`).toBe(
+        brand.parTipograficoEsperado
+      );
+
+      const sessId = `teste_multi_b_${id}_${Date.now()}`;
+      limparOrcamentoKit(sessId);
+      const estiloVisual = brand.dados.tom === "tradicional" ? "classico" : "moderno";
+
+      const dna = buildLogoVisualDna({
+        nome: brand.dados.nome,
+        sector: brand.dados.sector,
+        tom: brand.dados.tom || "tecnico",
+        paleta: props[0].paleta,
+        estiloDirecao: estiloVisual,
+        aspectRatio: meta.width / Math.max(1, meta.height),
+        isDarkMonochrome: meta.isDarkMonochrome,
+      });
+
+      const kit = await generateFullBrandKit({
+        draftId: meta.id,
+        processedPng,
+        isDarkMonochrome: meta.isDarkMonochrome,
+        dados: brand.dados,
+        paleta: props[0].paleta,
+        fontPairId: props[0].fontPairId,
+        kitStyle: estiloVisual === "moderno" ? "degrade" : "liso",
+        estiloVisual,
+        usarVetorizacaoOpcional: false,
+        logoDna: dna,
+        sessaoId: sessId,
+      });
+
+      expect(kit.meta.files).toHaveLength(38);
+      for (const rede of REDES_SOCIAIS_LIST) {
+        const audit = kit.meta.safeZoneAudits?.[rede.id];
+        expect(audit?.precisaRegeneracao, `Auditoria ${id} ${rede.id}: ${audit?.motivos.join("; ")}`).toBe(false);
+      }
+
+      const zip = await JSZip.loadAsync(kit.zipBuffer);
+      const root = `pandomarca-${kit.meta.slug}/`;
+      const html = await zip.file(`${root}email/assinatura.html`)!.async("string");
+      expect(html).toContain(brand.dados.nome);
+      expect(html).not.toMatch(/Forno da Vilari|fornodavilarica|Marta Queir|PandoWeb/i);
+
+      const fbStats = await measureFbForegroundLeftnessForTest(
+        kit.zipFileMap.get("facebook/capa.png")!
+      );
+      expect(fbStats.centroidX, `FB ${id}`).toBeLessThan(820);
+      expect(fbStats.leftMassRatio, `FB massa esquerda ${id}`).toBeGreaterThanOrEqual(0.95);
+
+      const ig45Band = await measureLowerPillBandHeightForTest(
+        kit.zipFileMap.get("instagram/publicacao-1080x1350.png")!,
+        650,
+        1120
+      );
+      expect(ig45Band, `IG pílula ${id}`).toBeGreaterThanOrEqual(80);
+
+      if (id === "vertice-digital") {
+        // Selo escuro na esquerda NÃO pode ter a base cortada a branco
+        const adaptedVertice = await adaptLogoForDarkSurface(
+          processedPng,
+          false,
+          "#0E294D"
+        );
+        const vRaw = await sharp(adaptedVertice.buffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+        const badgeEndX = Math.round(vRaw.info.width * 0.25);
+        const botYStart = Math.round(vRaw.info.height * 0.78);
+        let darkBadgeBottom = 0;
+        let bleachedWhiteBottom = 0;
+        for (let y = botYStart; y < vRaw.info.height - 4; y += 2) {
+          for (let x = 10; x < badgeEndX; x += 2) {
+            const idx = (y * vRaw.info.width + x) * 4;
+            if (vRaw.data[idx + 3] < 128) continue;
+            if (vRaw.data[idx] < 40 && vRaw.data[idx + 1] < 50 && vRaw.data[idx + 2] < 75) {
+              darkBadgeBottom++;
+            } else if (vRaw.data[idx] > 230 && vRaw.data[idx + 1] > 230 && vRaw.data[idx + 2] > 230) {
+              bleachedWhiteBottom++;
+            }
+          }
+        }
+        expect(darkBadgeBottom).toBeGreaterThan(200);
+        expect(bleachedWhiteBottom).toBe(0);
+      }
+
+      if (id === "atelier-terra-viva") {
+        // Fundo escuro verde-floresta profundo (sem castanho turvo) e wordmark adaptado com alto contraste
+        const igBuf = kit.zipFileMap.get("instagram/publicacao-1080x1350.png")!;
+        const igRaw = await sharp(igBuf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+        const cornerIdx = (40 * igRaw.info.width + 40) * 4;
+        const cR = igRaw.data[cornerIdx];
+        const cG = igRaw.data[cornerIdx + 1];
+        const cB = igRaw.data[cornerIdx + 2];
+        const cornerLum = 0.299 * cR + 0.587 * cG + 0.114 * cB;
+        expect(cornerLum).toBeLessThan(68);
+        expect(cG).toBeGreaterThanOrEqual(cR);
+
+        let brightWordmarkPx = 0;
+        for (let y = 420; y <= 760; y += 2) {
+          for (let x = 440; x <= 900; x += 2) {
+            const idx = (y * igRaw.info.width + x) * 4;
+            if (igRaw.data[idx] > 210 && igRaw.data[idx + 1] > 210 && igRaw.data[idx + 2] > 205) {
+              brightWordmarkPx++;
+            }
+          }
+        }
+        expect(brightWordmarkPx).toBeGreaterThan(250);
+      }
+
+      limparOrcamentoKit(sessId);
+    }
+  });
+
+  it("gera rondas e kits completos na Entrada A (SEM upload) para as 3 marcas multi-tom sem fugas nem apagamento de brasões", async () => {
+    for (const id of ["vertice-digital", "quinta-do-alvor", "atelier-terra-viva"] as const) {
+      const brand = MULTI_TONE_SAMPLE_BRANDS[id];
+      const tom = brand.dados.tom || "tecnico";
+      const sessId = `teste_multi_a_${id}_${Date.now()}`;
+      limparOrcamentoKit(sessId);
+
+      const ronda1 = await gerarPropostasLogotipoRonda({
+        sessaoId: sessId,
+        nome: brand.dados.nome,
+        slogan: brand.dados.slogan,
+        sector: brand.dados.sector,
+        tom,
+        simbolo: brand.dados.simbolo,
+        ronda: 1,
+      });
+
+      expect(ronda1.propostas).toHaveLength(2);
+      const [propA, propB] = ronda1.propostas;
+      expect(propA.fixtureNome).not.toContain("ia-aprovada/logo.jpg");
+      expect(propB.fixtureNome).not.toContain("ia-aprovada/logo.jpg");
+      expect(propA.sugestaoFontPairId).not.toBe(propB.sugestaoFontPairId);
+      expect(propA.sugestaoPaleta.primaria.hex).not.toBe(propB.sugestaoPaleta.primaria.hex);
+
+      const chosen = id === "quinta-do-alvor" ? propA : propB;
+      const chosenBuf = decodeBase64ImageInput(chosen.imagemBase64);
+      const analyzed = await analyzeAndStoreLogo({
+        buffer: chosenBuf,
+        filename: `${id}-entrada-a.png`,
+        mimeType: "image/png",
+        entrada: "A",
+      });
+
+      const dna = buildLogoVisualDna({
+        nome: brand.dados.nome,
+        sector: brand.dados.sector,
+        tom,
+        paleta: chosen.sugestaoPaleta,
+        estiloDirecao: chosen.estilo,
+        fixtureLogoOrigem: chosen.fixtureNome,
+        aspectRatio: analyzed.meta.width / Math.max(1, analyzed.meta.height),
+        isDarkMonochrome: analyzed.meta.isDarkMonochrome,
+      });
+
+      const kit = await generateFullBrandKit({
+        draftId: analyzed.meta.id,
+        processedPng: analyzed.processedPng,
+        isDarkMonochrome: analyzed.meta.isDarkMonochrome,
+        dados: brand.dados,
+        paleta: chosen.sugestaoPaleta,
+        fontPairId: chosen.sugestaoFontPairId,
+        kitStyle: chosen.estilo === "moderno" ? "degrade" : "liso",
+        estiloVisual: chosen.estilo,
+        usarVetorizacaoOpcional: false,
+        logoDna: dna,
+        sessaoId: sessId,
+      });
+
+      expect(kit.meta.files).toHaveLength(38);
+      for (const rede of REDES_SOCIAIS_LIST) {
+        const audit = kit.meta.safeZoneAudits?.[rede.id];
+        expect(audit?.precisaRegeneracao, `Entrada A ${id} ${rede.id}: ${audit?.motivos.join("; ")}`).toBe(false);
+      }
+
+      const fbStats = await measureFbForegroundLeftnessForTest(
+        kit.zipFileMap.get("facebook/capa.png")!
+      );
+      expect(fbStats.centroidX, `Entrada A FB ${id}`).toBeLessThan(820);
+      expect(fbStats.leftMassRatio, `Entrada A FB esquerda ${id}`).toBeGreaterThanOrEqual(0.95);
+
+      const ig45Band = await measureLowerPillBandHeightForTest(
+        kit.zipFileMap.get("instagram/publicacao-1080x1350.png")!,
+        650,
+        1180
+      );
+      expect(ig45Band, `Entrada A IG pílula ${id}`).toBeGreaterThanOrEqual(80);
+
+      if (id === "quinta-do-alvor") {
+        // O brasão empilhado superior conserva as iniciais escuras "QA" no círculo creme; apenas o texto inferior fica claro
+        const feBuf = kit.zipFileMap.get("variantes/fundo-escuro.png")!;
+        const feRaw = await sharp(feBuf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+        let darkCrestMonogramPx = 0;
+        let creamCrestPx = 0;
+        let brightLowerWordmarkPx = 0;
+        const halfY = Math.round(feRaw.info.height * 0.56);
+        for (let y = 120; y < halfY; y += 3) {
+          for (let x = 250; x < 950; x += 3) {
+            const idx = (y * feRaw.info.width + x) * 4;
+            const r = feRaw.data[idx];
+            const g = feRaw.data[idx + 1];
+            const b = feRaw.data[idx + 2];
+            if (r > 230 && g > 225 && b > 215) creamCrestPx++;
+            if (r < 55 && g < 35 && b < 35) darkCrestMonogramPx++;
+          }
+        }
+        for (let y = halfY; y < feRaw.info.height - 120; y += 3) {
+          for (let x = 200; x < 1000; x += 3) {
+            const idx = (y * feRaw.info.width + x) * 4;
+            if (feRaw.data[idx] > 220 && feRaw.data[idx + 1] > 220 && feRaw.data[idx + 2] > 215) {
+              brightLowerWordmarkPx++;
+            }
+          }
+        }
+        expect(creamCrestPx).toBeGreaterThan(500);
+        expect(darkCrestMonogramPx).toBeGreaterThan(150);
+        expect(brightLowerWordmarkPx).toBeGreaterThan(150);
+      }
+
+      if (id === "vertice-digital") {
+        // Proposta B azul elétrica conserva cor da caixa [VD] + letras brancas + texto claro
+        const feBuf = kit.zipFileMap.get("variantes/fundo-escuro.png")!;
+        const feRaw = await sharp(feBuf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+        let vividBluePx = 0;
+        let whiteTextPx = 0;
+        for (let y = 150; y < feRaw.info.height - 150; y += 3) {
+          for (let x = 100; x < feRaw.info.width - 100; x += 3) {
+            const idx = (y * feRaw.info.width + x) * 4;
+            const r = feRaw.data[idx];
+            const g = feRaw.data[idx + 1];
+            const b = feRaw.data[idx + 2];
+            if (b > r + 60 && b > 140) vividBluePx++;
+            if (r > 230 && g > 230 && b > 230) whiteTextPx++;
+          }
+        }
+        expect(vividBluePx).toBeGreaterThan(300);
+        expect(whiteTextPx).toBeGreaterThan(300);
+      }
+
+      limparOrcamentoKit(sessId);
+    }
+  });
+});
+
 

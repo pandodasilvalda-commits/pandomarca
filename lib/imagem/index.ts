@@ -177,8 +177,56 @@ function getDistinctPalettesForRound(
 } {
   const isWarmHeritage =
     tom === "tradicional" ||
-    tom === "natural" ||
-    (sector === "restauracao" && tom !== "tecnico" && tom !== "jovem");
+    (sector === "restauracao" && tom !== "tecnico" && tom !== "jovem" && tom !== "natural");
+
+  if (tom === "natural") {
+    if (ronda === 2) {
+      return {
+        classica: buildBrandPalette({
+          primaria: "#4A7C59",
+          secundaria: "#B45309",
+          papel: "#FAF6EE",
+          tinta: "#1C2E24",
+        }),
+        moderna: buildBrandPalette({
+          primaria: "#3F6212",
+          secundaria: "#C86D44",
+          papel: "#F7F6EE",
+          tinta: "#1A2E1A",
+        }),
+      };
+    }
+    if (ronda === 3) {
+      return {
+        classica: buildBrandPalette({
+          primaria: "#9A5B25",
+          secundaria: "#2E6F5E",
+          papel: "#FBF8F1",
+          tinta: "#241F1A",
+        }),
+        moderna: buildBrandPalette({
+          primaria: "#1F5E5B",
+          secundaria: "#D97706",
+          papel: "#F5F7F4",
+          tinta: "#142625",
+        }),
+      };
+    }
+    return {
+      classica: buildBrandPalette({
+        primaria: "#C86D44",
+        secundaria: "#4A7C59",
+        papel: "#FBF7F0",
+        tinta: "#1F3A32",
+      }),
+      moderna: buildBrandPalette({
+        primaria: "#2E6F5E",
+        secundaria: "#C87D28",
+        papel: "#F7F4EC",
+        tinta: "#182D26",
+      }),
+    };
+  }
 
   if (!isWarmHeritage) {
     if (tom === "tecnico") {
@@ -191,7 +239,7 @@ function getDistinctPalettesForRound(
             tinta: "#0F172A",
           }),
           moderna: buildBrandPalette({
-            primaria: "#0F172A",
+            primaria: "#2563EB",
             secundaria: "#0EA5E9",
             papel: "#F1F5F9",
             tinta: "#090D16",
@@ -207,10 +255,10 @@ function getDistinctPalettesForRound(
             tinta: "#0F172A",
           }),
           moderna: buildBrandPalette({
-            primaria: "#111827",
-            secundaria: "#2563EB",
+            primaria: "#0EA5E9",
+            secundaria: "#1D4ED8",
             papel: "#F9FAFB",
-            tinta: "#030712",
+            tinta: "#0F172A",
           }),
         };
       }
@@ -222,10 +270,10 @@ function getDistinctPalettesForRound(
           tinta: "#0F172A",
         }),
         moderna: buildBrandPalette({
-          primaria: "#0F172A",
+          primaria: "#0284C7",
           secundaria: "#38BDF8",
           papel: "#F1F5F9",
-          tinta: "#0B1120",
+          tinta: "#0F172A",
         }),
       };
     }
@@ -336,7 +384,7 @@ function getDistinctPalettesForRound(
       tinta: "#2A1810",
     }),
     moderna: buildBrandPalette({
-      primaria: "#26150D",
+      primaria: "#9A3412",
       secundaria: "#D9822B",
       papel: "#FAF3E1",
       tinta: "#26150D",
