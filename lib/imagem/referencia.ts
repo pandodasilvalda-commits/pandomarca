@@ -59,25 +59,25 @@ export function buildLogoVisualDna(params: {
   const tomSpec = TOM_DA_MARCA_SPECS[tom];
 
   const fixture = (params.fixtureLogoOrigem || "").toLowerCase();
+  const nomeLow = (params.nome || "").toLowerCase();
+  const isFornoBrand =
+    !params.nome ||
+    nomeLow.includes("vilari") ||
+    nomeLow.includes("forno da vilari");
+  const isApprovedIaFixture = fixture.includes("ia-aprovada");
   const isModernFixture =
     params.estiloDirecao === "moderno" ||
-    fixture.includes("moderno") ||
-    paletaHex.primaria.toUpperCase() === "#172E2C" ||
-    paletaHex.primaria.toUpperCase() === "#0F3D3E" ||
-    paletaHex.primaria.toUpperCase() === "#1E293B";
+    fixture.includes("capa-moderna") ||
+    (isFornoBrand &&
+      (fixture.includes("moderno") ||
+        paletaHex.primaria.toUpperCase() === "#172E2C"));
 
   const sector: SectorId =
     params.sector && params.sector in SECTORS ? params.sector : "restauracao";
   const sectorLabel = SECTORS[sector].rotulo;
   const keywords = (params.tresPalavras || "").trim();
 
-  if (
-    fixture.includes("logo") &&
-    !isModernFixture &&
-    ((params.nome || "").toLowerCase().includes("vilari") ||
-      !params.nome ||
-      sector === "restauracao")
-  ) {
+  if (isFornoBrand && isApprovedIaFixture && !isModernFixture) {
     return {
       estiloDirecao: "classico",
       tom,
@@ -98,7 +98,7 @@ export function buildLogoVisualDna(params: {
     };
   }
 
-  if (isModernFixture) {
+  if (isFornoBrand && isApprovedIaFixture && isModernFixture) {
     return {
       estiloDirecao: "moderno",
       tom,

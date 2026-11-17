@@ -161,3 +161,130 @@ export const SAMPLE_BRANDS: Record<SampleBrandPreset["id"], SampleBrandPreset> =
     },
   },
 };
+
+export interface MultiToneTestBrand {
+  id: "vertice-digital" | "quinta-do-alvor" | "atelier-terra-viva";
+  arquetipo: string;
+  dados: BrandData;
+  svg: string;
+  coresEsperadas: {
+    primaria: string;
+    secundaria: string;
+    papel: string;
+    tinta: string;
+  };
+  parTipograficoEsperado: "tecnica" | "classica" | "clara";
+}
+
+export const MULTI_TONE_SAMPLE_BRANDS: Record<
+  MultiToneTestBrand["id"],
+  MultiToneTestBrand
+> = {
+  "vertice-digital": {
+    id: "vertice-digital",
+    arquetipo: "Tecnológica e modular (sem serifa)",
+    dados: {
+      nome: "Vértice Digital",
+      sector: "tecnologia",
+      tom: "tecnico",
+      simbolo: true,
+      slogan: "Plataformas cloud e software à medida",
+      pessoa: "Tiago Neves",
+      cargo: "Diretor de Engenharia",
+      email: "ola@verticedigital.pt",
+      telefone: "+351 253 910 420",
+      website: "https://verticedigital.pt",
+      morada: "Avenida Central 118, Braga",
+      nif: "516 402 819",
+      servicos: "Arquitetura Cloud • Automação • APIs Empresariais",
+    },
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" width="1280" height="720">
+      <rect x="44" y="40" width="240" height="240" rx="52" fill="#0F172A"/>
+      <polygon points="100,96 164,228 228,96 196,96 164,168 132,96" fill="#0EA5E9"/>
+      <circle cx="164" cy="96" r="16" fill="#38BDF8"/>
+      <text x="320" y="150" font-family="Manrope, sans-serif" font-weight="800" font-size="56" fill="#0F172A">VÉRTICE</text>
+      <text x="322" y="210" font-family="Manrope, sans-serif" font-weight="600" font-size="38" fill="#0284C7">Digital</text>
+      <rect x="322" y="232" width="160" height="6" rx="3" fill="#0EA5E9"/>
+    </svg>`,
+    coresEsperadas: {
+      primaria: "#0284C7",
+      secundaria: "#0EA5E9",
+      papel: "#F8FAFC",
+      tinta: "#0F172A",
+    },
+    parTipograficoEsperado: "tecnica",
+  },
+  "quinta-do-alvor": {
+    id: "quinta-do-alvor",
+    arquetipo: "Clássica, patrimonial e vínica (serifada intencional)",
+    dados: {
+      nome: "Quinta do Alvor",
+      sector: "restauracao",
+      tom: "tradicional",
+      simbolo: false,
+      slogan: "Enoturismo e cozinha duriense desde 1924",
+      pessoa: "Henrique Sá",
+      cargo: "Anfitrião e Produtor",
+      email: "reservas@quintadoalvor.pt",
+      telefone: "+351 254 730 115",
+      website: "https://quintadoalvor.pt",
+      morada: "Estrada Nacional 222, Pinhão, Douro",
+      nif: "503 198 440",
+      servicos: "Provas de Vinho • Mesa Regional • Estadias",
+    },
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 380" width="1280" height="760">
+      <g transform="translate(46, 50)">
+        <circle cx="120" cy="130" r="106" fill="#FAF6EE" stroke="#6B2737" stroke-width="10"/>
+        <circle cx="120" cy="130" r="88" fill="none" stroke="#B4843E" stroke-width="3"/>
+        <path d="M120 62 C92 98 92 160 120 198 C148 160 148 98 120 62 Z" fill="#6B2737"/>
+        <circle cx="120" cy="128" r="16" fill="#B4843E"/>
+      </g>
+      <text x="310" y="156" font-family="Lora, Georgia, serif" font-weight="700" font-size="52" fill="#2B1418">Quinta</text>
+      <text x="312" y="216" font-family="Lora, Georgia, serif" font-weight="600" font-size="42" fill="#6B2737">do Alvor</text>
+      <rect x="312" y="236" width="174" height="4" rx="2" fill="#B4843E"/>
+      <text x="312" y="268" font-family="Lora, Georgia, serif" font-weight="500" font-size="16" letter-spacing="3" fill="#6B2737">ALTO DOURO • 1924</text>
+    </svg>`,
+    coresEsperadas: {
+      primaria: "#6B2737",
+      secundaria: "#B4843E",
+      papel: "#FAF6EE",
+      tinta: "#2B1418",
+    },
+    parTipograficoEsperado: "classica",
+  },
+  "atelier-terra-viva": {
+    id: "atelier-terra-viva",
+    arquetipo: "Próxima, natural e artesanal (orgânica limpa)",
+    dados: {
+      nome: "Atelier Terra Viva",
+      sector: "comercio",
+      tom: "natural",
+      simbolo: true,
+      slogan: "Cerâmica de autor moldada à mão",
+      pessoa: "Inês Faria",
+      cargo: "Ceramista Fundadora",
+      email: "atelier@terraviva.pt",
+      telefone: "+351 253 814 905",
+      website: "https://terraviva.pt",
+      morada: "Largo da Olaria 27, Barcelos",
+      nif: "515 720 612",
+      servicos: "Peças de Mesa • Oficinas Criativas • Encomendas",
+    },
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" width="1280" height="720">
+      <rect x="44" y="44" width="232" height="232" rx="116" fill="#2E6F5E"/>
+      <path d="M160 88 C118 118 110 182 160 222 C210 182 202 118 160 88 Z" fill="#FBF7F0"/>
+      <ellipse cx="160" cy="176" rx="34" ry="22" fill="#C86D44"/>
+      <text x="314" y="148" font-family="Nunito, sans-serif" font-weight="800" font-size="48" fill="#1F3A32">Atelier</text>
+      <text x="314" y="206" font-family="Nunito, sans-serif" font-weight="700" font-size="44" fill="#C86D44">Terra Viva</text>
+      <rect x="314" y="228" width="150" height="5" rx="2.5" fill="#2E6F5E"/>
+    </svg>`,
+    coresEsperadas: {
+      primaria: "#2E6F5E",
+      secundaria: "#C86D44",
+      papel: "#FBF7F0",
+      tinta: "#1F3A32",
+    },
+    parTipograficoEsperado: "clara",
+  },
+};
+

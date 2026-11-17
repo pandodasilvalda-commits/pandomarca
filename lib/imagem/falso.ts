@@ -9,9 +9,16 @@ import {
   resolverHierarquiaInformacaoConfig,
   type RedeSocialConfig,
   type RedeSocialId,
+  type SafeZoneRect,
+  type TomDaMarca,
 } from "../config/redes-sociais";
 import { getSatoriFontsForPair } from "../fonts";
-import { buildBrandPalette, hexToRgb, mixHex } from "../palette";
+import {
+  resolverParTipograficoMarca,
+  SECTORS,
+  type SectorId,
+} from "../formats";
+import { buildBrandPalette, contrastRatio, hexToRgb, mixHex } from "../palette";
 import { adaptLogoForDarkSurface } from "../logo-surface";
 import { vetorizarImagemLocal } from "../vetorizar";
 import {
@@ -304,14 +311,515 @@ async function cleanLowerRightSliver(
     .toBuffer();
 }
 
+const PT_INITIAL_STOPWORDS = new Set([
+  "de",
+  "da",
+  "do",
+  "das",
+  "dos",
+  "e",
+  "a",
+  "o",
+  "as",
+  "os",
+]);
+
+function extractMonogramInitials(nome: string): string {
+  const clean = (nome || "").trim();
+  if (!clean) return "PM";
+
+  const words = clean
+    .replace(/[^A-Za-zÀ-ÿ0-9\s-]/g, " ")
+    .split(/[\s-]+/)
+    .filter(Boolean);
+
+  const significant =
+    words.length > 1
+      ? words.filter((w) => !PT_INITIAL_STOPWORDS.has(w.toLowerCase()))
+      : words;
+  const pickWords = significant.length > 0 ? significant : words;
+
+  if (pickWords.length >= 2) {
+    return `${pickWords[0][0] || ""}${pickWords[1][0] || ""}`.toUpperCase();
+  }
+
+  const single = pickWords[0] || clean;
+  const camelCaps = single.slice(1).match(/[A-ZÀ-Ý]/);
+  if (camelCaps) {
+    return `${single[0]}${camelCaps[0]}`.toUpperCase();
+  }
+  return single.slice(0, 2).toUpperCase();
+}
+
 /**
- * Gera uma proposta de logótipo em modo de demonstração a partir exclusivamente
- * das referências aprovadas em `docs/referencias/ia-aprovada/` via `sharp` puro (sem regras SVG).
+ * Gera uma proposta de logótipo em modo de demonstração para qualquer marca
+ * (sem fugas do ensaio Forno da Vilariça), respeitando a direção (clássica vs moderna),
+ * a paleta e o par tipográfico derivado do tom e sector do cliente, sobre fundo branco
+ * uniforme para que a remoção de margem automática crie transparência limpa.
+ */
+async function generateCustomMockLogoForFalso(
+  formato: "logotipo-classico" | "logotipo-moderno" | "logotipo-editorial",
+  ronda: number,
+  contexto?: ImagemContexto
+): Promise<{ buffer: Buffer; fixtureNome: string; width: number; height: number }> {
+  const size = 1024;
+  const r = Math.max(1, Math.min(3, ronda || 1));
+  const nome = (contexto?.nome || "Marca Cliente").trim();
+  const initials = extractMonogramInitials(nome);
+  const sector: SectorId =
+    contexto?.sector && contexto.sector in SECTORS ? contexto.sector : "servicos";
+  const sectorLabel = SECTORS[sector].rotulo.toUpperCase();
+
+  const pal =
+    contexto?.paleta ||
+    buildBrandPalette({
+      primaria: "#334155",
+      secundaria: "#475569",
+      papel: "#F8FAFC",
+      tinta: "#0F172A",
+    });
+
+  const estiloDir = formato === "logotipo-moderno" ? "moderno" : "classico";
+  const pairId =
+    contexto?.fontPairId ||
+    resolverParTipograficoMarca({
+      tom: contexto?.tom,
+      sector,
+      estiloDirecao: estiloDir,
+    });
+  const { pair, fonts } = getSatoriFontsForPair(pairId);
+  const h = React.createElement;
+
+  const badgeInkOnPrim =
+    contrastRatio("#FFFFFF", pal.primaria.hex) >= 4.5 ? "#FFFFFF" : pal.papel.hex;
+  const badgeInkOnTinta =
+    contrastRatio("#FFFFFF", pal.tinta.hex) >= 4.5 ? "#FFFFFF" : pal.papel.hex;
+
+  let el: React.ReactElement;
+
+  if (formato === "logotipo-moderno") {
+    // Composição horizontal [Emblema à esquerda] + [48 px livres] + [Nome à direita]
+    // Mantém largura > 1,35 × altura após recorte para destacar ícone a 40 px e adaptar em fundos escuros
+    const titleSize = nome.length > 20 ? 52 : nome.length > 14 ? 62 : 74;
+
+    const badgeEl =
+      r === 2
+        ? h(
+            "div",
+            {
+              style: {
+                width: "228px",
+                height: "228px",
+                borderRadius: "114px",
+                backgroundColor: pal.primaria.hex,
+                border: `8px solid ${pal.secundaria.hex}`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              },
+            },
+            h(
+              "div",
+              {
+                style: {
+                  fontFamily: pair.tituloFamily,
+                  fontWeight: 800,
+                  fontSize: "88px",
+                  color: badgeInkOnPrim,
+                  letterSpacing: "-0.02em",
+                },
+              },
+              initials
+            )
+          )
+        : r === 3
+        ? h(
+            "div",
+            {
+              style: {
+                width: "228px",
+                height: "228px",
+                borderRadius: "36px",
+                backgroundColor: pal.tinta.hex,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                position: "relative",
+                flexShrink: 0,
+              },
+            },
+            h("div", {
+              style: {
+                position: "absolute",
+                left: "20px",
+                top: "38px",
+                bottom: "38px",
+                width: "12px",
+                borderRadius: "6px",
+                backgroundColor: pal.primaria.hex,
+              },
+            }),
+            h(
+              "div",
+              {
+                style: {
+                  fontFamily: pair.tituloFamily,
+                  fontWeight: 800,
+                  fontSize: "86px",
+                  color: badgeInkOnTinta,
+                  letterSpacing: "-0.02em",
+                  marginLeft: "10px",
+                },
+              },
+              initials
+            )
+          )
+        : h(
+            "div",
+            {
+              style: {
+                width: "228px",
+                height: "228px",
+                borderRadius: "48px",
+                backgroundColor: pal.primaria.hex,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                position: "relative",
+                flexShrink: 0,
+              },
+            },
+            h("div", {
+              style: {
+                position: "absolute",
+                right: "24px",
+                top: "24px",
+                width: "28px",
+                height: "28px",
+                borderRadius: "999px",
+                backgroundColor: pal.secundaria.hex,
+              },
+            }),
+            h(
+              "div",
+              {
+                style: {
+                  fontFamily: pair.tituloFamily,
+                  fontWeight: 800,
+                  fontSize: "88px",
+                  color: badgeInkOnPrim,
+                  letterSpacing: "-0.02em",
+                },
+              },
+              initials
+            )
+          );
+
+    el = h(
+      "div",
+      {
+        style: {
+          width: `${size}px`,
+          height: `${size}px`,
+          backgroundColor: "#FFFFFF",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: pair.textoFamily,
+        },
+      },
+      h(
+        "div",
+        {
+          style: {
+            width: "896px",
+            display: "flex",
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+          },
+        },
+        badgeEl,
+        h("div", { style: { width: "48px", height: "16px", flexShrink: 0 } }),
+        h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              justifyContent: "center",
+              maxWidth: "590px",
+            },
+          },
+          h(
+            "div",
+            {
+              style: {
+                fontFamily: pair.tituloFamily,
+                fontWeight: 800,
+                fontSize: `${titleSize}px`,
+                color: pal.tinta.hex,
+                lineHeight: 1.05,
+                letterSpacing: "-0.02em",
+              },
+            },
+            nome
+          ),
+          h(
+            "div",
+            {
+              style: {
+                marginTop: "18px",
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "center",
+                gap: "14px",
+              },
+            },
+            h("div", {
+              style: {
+                width: "44px",
+                height: "6px",
+                borderRadius: "3px",
+                backgroundColor: pal.primaria.hex,
+              },
+            }),
+            h(
+              "div",
+              {
+                style: {
+                  fontFamily: pair.textoFamily,
+                  fontWeight: 700,
+                  fontSize: "19px",
+                  letterSpacing: "0.1em",
+                  color: pal.primaria.hex,
+                },
+              },
+              sectorLabel
+            )
+          )
+        )
+      )
+    );
+  } else {
+    // Composição clássica/editorial empilhada com faixa horizontal limpa de 64 px entre emblema e texto
+    // Mantém altura >= largura para separação limpa do ícone no Favicon e Cartão
+    const titleSize = nome.length > 18 ? 50 : nome.length > 12 ? 58 : 66;
+
+    const crestEl =
+      r === 2
+        ? h(
+            "div",
+            {
+              style: {
+                width: "260px",
+                height: "272px",
+                borderRadius: "38px 38px 124px 124px",
+                backgroundColor: pal.primaria.hex,
+                border: `7px solid ${pal.secundaria.hex}`,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+              },
+            },
+            h(
+              "div",
+              {
+                style: {
+                  fontFamily: pair.tituloFamily,
+                  fontWeight: 700,
+                  fontSize: "92px",
+                  color: badgeInkOnPrim,
+                  lineHeight: 1,
+                },
+              },
+              initials
+            ),
+            h("div", {
+              style: {
+                marginTop: "12px",
+                width: "64px",
+                height: "4px",
+                borderRadius: "2px",
+                backgroundColor: pal.secundaria.hex,
+              },
+            })
+          )
+        : r === 3
+        ? h(
+            "div",
+            {
+              style: {
+                width: "264px",
+                height: "264px",
+                borderRadius: "132px",
+                backgroundColor: pal.tinta.hex,
+                border: `8px solid ${pal.secundaria.hex}`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              },
+            },
+            h(
+              "div",
+              {
+                style: {
+                  fontFamily: pair.tituloFamily,
+                  fontWeight: 700,
+                  fontSize: "92px",
+                  color: badgeInkOnTinta,
+                },
+              },
+              initials
+            )
+          )
+        : h(
+            "div",
+            {
+              style: {
+                width: "268px",
+                height: "268px",
+                borderRadius: "134px",
+                backgroundColor: pal.papel.hex,
+                border: `10px solid ${pal.primaria.hex}`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "12px",
+              },
+            },
+            h(
+              "div",
+              {
+                style: {
+                  width: "100%",
+                  height: "100%",
+                  borderRadius: "120px",
+                  border: `3px solid ${pal.secundaria.hex}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                },
+              },
+              h(
+                "div",
+                {
+                  style: {
+                    fontFamily: pair.tituloFamily,
+                    fontWeight: 700,
+                    fontSize: "90px",
+                    color: pal.tinta.hex,
+                  },
+                },
+                initials
+              )
+            )
+          );
+
+    el = h(
+      "div",
+      {
+        style: {
+          width: `${size}px`,
+          height: `${size}px`,
+          backgroundColor: "#FFFFFF",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: pair.textoFamily,
+        },
+      },
+      crestEl,
+      h("div", { style: { width: "40px", height: "64px" } }),
+      h(
+        "div",
+        {
+          style: {
+            maxWidth: "440px",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            textAlign: "center",
+          },
+        },
+        h(
+          "div",
+          {
+            style: {
+              fontFamily: pair.tituloFamily,
+              fontWeight: 700,
+              fontSize: `${titleSize}px`,
+              color: pal.tinta.hex,
+              lineHeight: 1.08,
+              textAlign: "center",
+            },
+          },
+          nome
+        ),
+        h("div", {
+          style: {
+            marginTop: "18px",
+            width: "108px",
+            height: "5px",
+            borderRadius: "2.5px",
+            backgroundColor: pal.primaria.hex,
+          },
+        }),
+        h(
+          "div",
+          {
+            style: {
+              marginTop: "14px",
+              fontFamily: pair.textoFamily,
+              fontWeight: 600,
+              fontSize: "20px",
+              letterSpacing: "0.14em",
+              color: pal.primaria.hex,
+              textAlign: "center",
+            },
+          },
+          sectorLabel
+        )
+      )
+    );
+  }
+
+  const svg = await satori(el, { width: size, height: size, fonts });
+  const pngBuf = Buffer.from(
+    new Resvg(svg, { fitTo: { mode: "width", value: size } }).render().asPng()
+  );
+  const out = await sharp(pngBuf)
+    .flatten({ background: { r: 255, g: 255, b: 255 } })
+    .png()
+    .toBuffer();
+
+  return {
+    buffer: out,
+    fixtureNome: `falso-estudio:${formato}`,
+    width: size,
+    height: size,
+  };
+}
+
+/**
+ * Gera uma proposta de logótipo em modo de demonstração: para o ensaio «Forno da Vilariça»
+ * usa as referências aprovadas em `docs/referencias/ia-aprovada/`; para qualquer outra marca
+ * sintetiza propostas limpas e exclusivas a partir da paleta e tipografia dessa marca.
  */
 async function generateLogoFromApprovedRefs(
   formato: "logotipo-classico" | "logotipo-moderno" | "logotipo-editorial",
-  ronda: number
+  ronda: number,
+  contexto?: ImagemContexto
 ): Promise<{ buffer: Buffer; fixtureNome: string; width: number; height: number }> {
+  if (contexto?.nome && !isDefaultFornoBrand(contexto.nome)) {
+    return generateCustomMockLogoForFalso(formato, ronda, contexto);
+  }
+
   const size = 1024;
   const r = Math.max(1, Math.min(3, ronda || 1));
 
@@ -662,7 +1170,7 @@ async function generateAvatarFromEmblemRef(
       if (stats.meanLum > 205 && stats.brightFraction > 0.72) {
         bgHex = darkSurfaceHex;
       } else {
-        bgHex = mixHex(lightSurfaceHex, pal?.primaria.hex || "#0078FC", 0.22);
+        bgHex = mixHex(lightSurfaceHex, pal?.primaria.hex || "#334155", 0.22);
         customHaloInnerRgb = { r: 255, g: 255, b: 255 };
       }
     }
@@ -861,6 +1369,7 @@ async function composeInlineHorizontalPair(opts: {
   gapRatio?: number;
   emblemWeight?: number;
   wordmarkWeight?: number;
+  align?: "center" | "left";
 }): Promise<{ buffer: Buffer; width: number; height: number }> {
   const { targetW, targetH } = opts;
   const gapRatio = opts.gapRatio ?? 0.045;
@@ -905,7 +1414,8 @@ async function composeInlineHorizontalPair(opts: {
   ]);
 
   const totalW = ew + gap + ww;
-  const startX = Math.max(0, Math.round((targetW - totalW) / 2));
+  const startX =
+    opts.align === "left" ? 0 : Math.max(0, Math.round((targetW - totalW) / 2));
   const eTop = Math.max(0, Math.round((targetH - eh) / 2));
   const wTop = Math.max(0, Math.round((targetH - wh) / 2));
 
@@ -937,6 +1447,7 @@ async function composeVerticalHighlightedStack(opts: {
   sloganBuf?: Buffer;
   targetW: number;
   targetH: number;
+  align?: "center" | "left";
 }): Promise<Buffer> {
   const { targetW, targetH, sloganBuf } = opts;
   const hasSlogan = Boolean(sloganBuf);
@@ -1000,23 +1511,26 @@ async function composeVerticalHighlightedStack(opts: {
   const gap2 = sScaled ? Math.max(8, Math.round(targetH * 0.025)) : 0;
   const usedH = eh + gap1 + wh + gap2 + sh;
   cursorY = Math.max(0, Math.round((targetH - usedH) / 2));
+  const groupW = Math.max(ew, ww, sw);
+  const groupLeft =
+    opts.align === "left" ? 0 : Math.max(0, Math.round((targetW - groupW) / 2));
 
   overlays.push({
     input: emblemScaled,
-    left: Math.max(0, Math.round((targetW - ew) / 2)),
+    left: groupLeft + Math.max(0, Math.round((groupW - ew) / 2)),
     top: cursorY,
   });
   cursorY += eh + gap1;
   overlays.push({
     input: wordmarkScaled,
-    left: Math.max(0, Math.round((targetW - ww) / 2)),
+    left: groupLeft + Math.max(0, Math.round((groupW - ww) / 2)),
     top: cursorY,
   });
   if (sScaled) {
     cursorY += wh + gap2;
     overlays.push({
       input: sScaled,
-      left: Math.max(0, Math.round((targetW - sw) / 2)),
+      left: groupLeft + Math.max(0, Math.round((groupW - sw) / 2)),
       top: cursorY,
     });
   }
@@ -1512,6 +2026,100 @@ async function createRoundedLogoPlate(opts: {
   return { buffer: composed, width: plateW, height: plateH };
 }
 
+function packPillLines(
+  rawItems: string[],
+  maxCharsPerLine = 34,
+  maxOutLines = 3
+): string[] {
+  const tokens: string[] = [];
+  for (const raw of rawItems) {
+    const clean = raw.trim();
+    if (!clean) continue;
+    if (clean.length <= maxCharsPerLine) {
+      tokens.push(clean);
+      continue;
+    }
+    if (clean.includes("•")) {
+      const subParts = clean
+        .split("•")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      for (const sp of subParts) {
+        tokens.push(sp);
+      }
+      continue;
+    }
+    tokens.push(clean);
+  }
+
+  const splitBalancedLine = (text: string): string[] => {
+    if (text.length <= maxCharsPerLine) return [text];
+    const words = text.split(/\s+/).filter(Boolean);
+    if (words.length <= 1) return [text.slice(0, maxCharsPerLine)];
+
+    if (text.length <= maxCharsPerLine * 2 - 2) {
+      let bestSplit = -1;
+      let bestDiff = Infinity;
+      let leftLen = 0;
+      for (let i = 0; i < words.length - 1; i++) {
+        leftLen += (i > 0 ? 1 : 0) + words[i].length;
+        const rightLen = text.length - leftLen - 1;
+        if (leftLen <= maxCharsPerLine && rightLen <= maxCharsPerLine) {
+          const diff = Math.abs(leftLen - rightLen);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestSplit = i;
+          }
+        }
+      }
+      if (bestSplit >= 0) {
+        return [
+          words.slice(0, bestSplit + 1).join(" "),
+          words.slice(bestSplit + 1).join(" "),
+        ];
+      }
+    }
+
+    const wrapped: string[] = [];
+    let current = "";
+    for (const w of words) {
+      if (!current) {
+        current = w;
+      } else if (current.length + 1 + w.length <= maxCharsPerLine) {
+        current = `${current} ${w}`;
+      } else {
+        wrapped.push(current);
+        current = w;
+      }
+    }
+    if (current) wrapped.push(current);
+    return wrapped;
+  };
+
+  const expanded: string[] = [];
+  for (const tok of tokens) {
+    expanded.push(...splitBalancedLine(tok));
+  }
+
+  const packed: string[] = [];
+  for (const line of expanded) {
+    const prev = packed[packed.length - 1];
+    if (
+      prev &&
+      !prev.includes("•") &&
+      !line.includes("•") &&
+      prev.length + 3 + line.length <= 31 &&
+      (expanded.length > maxOutLines || (prev.length <= 16 && line.length <= 16))
+    ) {
+      packed[packed.length - 1] = `${prev} • ${line}`;
+    } else {
+      packed.push(line);
+    }
+  }
+
+  return packed.slice(0, maxOutLines);
+}
+
 async function renderCustomContactPill(opts: {
   lines: string[];
   maxWidth: number;
@@ -1520,30 +2128,152 @@ async function renderCustomContactPill(opts: {
   estiloVisual: "moderno" | "classico";
   paleta: ReturnType<typeof buildBrandPalette>;
   fontPairId?: ImagemContexto["fontPairId"];
+  tom?: TomDaMarca;
+  sector?: SectorId;
 }): Promise<{ buffer: Buffer; width: number; height: number } | null> {
-  const cleanText = opts.lines
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .join("  •  ");
-  if (!cleanText) return null;
+  const packedLines = packPillLines(opts.lines, 34, 3);
+  if (packedLines.length === 0) return null;
 
-  const { pair, fonts } = getSatoriFontsForPair(opts.fontPairId || "tecnica");
+  const resolvedPairId =
+    opts.fontPairId ||
+    resolverParTipograficoMarca({
+      tom: opts.tom,
+      sector: opts.sector,
+      estiloDirecao: opts.estiloVisual,
+    });
+  const { pair, fonts } = getSatoriFontsForPair(resolvedPairId);
+
   const isDark = opts.estiloVisual === "moderno";
-  const bg = isDark ? "rgba(255, 255, 255, 0.14)" : "#FFFFFF";
+  const baseDarkHex = mixHex(opts.paleta.tinta.hex, opts.paleta.secundaria.hex, 0.25);
+  const darkRgb = hexToRgb(baseDarkHex);
+  const darkLuma = 0.299 * darkRgb.r + 0.587 * darkRgb.g + 0.114 * darkRgb.b;
+  const safeDarkRgb =
+    darkLuma > 75 ? mixRgbChannels(darkRgb, { r: 12, g: 18, b: 30 }, 0.65) : darkRgb;
+
+  const bg = isDark
+    ? `rgba(${safeDarkRgb.r}, ${safeDarkRgb.g}, ${safeDarkRgb.b}, 0.90)`
+    : "#FFFFFF";
   const border = isDark
-    ? mixHex(opts.paleta.primaria.hex, "#FFFFFF", 0.45)
-    : mixHex(opts.paleta.primaria.hex, opts.paleta.papel.hex, 0.5);
-  const textCol = isDark ? "#FFFFFF" : opts.paleta.tinta.hex;
-  const isLargeVertical = opts.canvasW >= 1000 && opts.canvasH >= 1200;
-  const fontSize = isLargeVertical
-    ? cleanText.length > 42
-      ? 26
-      : 30
-    : cleanText.length > 44
-    ? 22
-    : 25;
-  const pillH = isLargeVertical ? 84 : 68;
+    ? mixHex(opts.paleta.primaria.hex, "#FFFFFF", 0.42)
+    : mixHex(opts.paleta.primaria.hex, opts.paleta.papel.hex, 0.42);
+  const lightSurfaceText =
+    contrastRatio(opts.paleta.tinta.hex, "#FFFFFF") >= 7
+      ? opts.paleta.tinta.hex
+      : "#0F172A";
+  const textCol = isDark ? "#FFFFFF" : lightSurfaceText;
+
+  const isMobileIg = opts.canvasW >= 1000 && opts.canvasH >= 1000;
+  const maxLineLen = packedLines.reduce((m, s) => Math.max(m, s.length), 0);
+
+  const fontSize = isMobileIg
+    ? packedLines.length >= 3
+      ? 38
+      : maxLineLen > 31
+      ? 38
+      : maxLineLen > 24
+      ? 40
+      : 42
+    : maxLineLen > 30
+    ? 24
+    : 27;
+
+  const pillH = isMobileIg
+    ? packedLines.length === 1
+      ? 104
+      : packedLines.length === 2
+      ? 156
+      : 204
+    : packedLines.length === 1
+    ? 72
+    : 108;
+
+  const borderRadius = packedLines.length === 1 ? "999px" : "28px";
   const h = React.createElement;
+
+  const innerContent =
+    packedLines.length === 1
+      ? h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "14px",
+              backgroundColor: bg,
+              border: `2px solid ${border}`,
+              borderRadius,
+              padding: isMobileIg ? "18px 34px" : "12px 26px",
+              maxWidth: `${opts.maxWidth - 16}px`,
+            },
+          },
+          h("div", {
+            style: {
+              width: isMobileIg ? "12px" : "9px",
+              height: isMobileIg ? "12px" : "9px",
+              borderRadius: "999px",
+              backgroundColor: opts.paleta.primaria.hex,
+              flexShrink: 0,
+            },
+          }),
+          h(
+            "div",
+            {
+              style: {
+                fontFamily: pair.textoFamily,
+                fontWeight: 600,
+                fontSize: `${fontSize}px`,
+                color: textCol,
+                lineHeight: 1.18,
+                textAlign: "center",
+              },
+            },
+            packedLines[0]
+          )
+        )
+      : h(
+          "div",
+          {
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: isMobileIg ? "7px" : "4px",
+              backgroundColor: bg,
+              border: `2px solid ${border}`,
+              borderRadius,
+              padding: isMobileIg ? "16px 30px" : "10px 24px",
+              maxWidth: `${opts.maxWidth - 16}px`,
+            },
+          },
+          h("div", {
+            style: {
+              width: isMobileIg ? "44px" : "32px",
+              height: "4px",
+              borderRadius: "2px",
+              backgroundColor: opts.paleta.primaria.hex,
+              marginBottom: isMobileIg ? "4px" : "2px",
+            },
+          }),
+          ...packedLines.map((line) =>
+            h(
+              "div",
+              {
+                style: {
+                  fontFamily: pair.textoFamily,
+                  fontWeight: 600,
+                  fontSize: `${fontSize}px`,
+                  color: textCol,
+                  lineHeight: 1.2,
+                  textAlign: "center",
+                },
+              },
+              line
+            )
+          )
+        );
 
   const el = h(
     "div",
@@ -1554,45 +2284,10 @@ async function renderCustomContactPill(opts: {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
+        fontFamily: pair.textoFamily,
       },
     },
-    h(
-      "div",
-      {
-        style: {
-          display: "flex",
-          flexDirection: "row",
-          alignItems: "center",
-          gap: "14px",
-          backgroundColor: bg,
-          border: `1.5px solid ${border}`,
-          borderRadius: "999px",
-          padding: isLargeVertical ? "14px 32px" : "12px 26px",
-          maxWidth: `${opts.maxWidth - 16}px`,
-        },
-      },
-      h("div", {
-        style: {
-          width: isLargeVertical ? "11px" : "9px",
-          height: isLargeVertical ? "11px" : "9px",
-          borderRadius: "999px",
-          backgroundColor: opts.paleta.primaria.hex,
-        },
-      }),
-      h(
-        "div",
-        {
-          style: {
-            fontFamily: pair.tituloFamily,
-            fontWeight: 600,
-            fontSize: `${fontSize}px`,
-            color: textCol,
-            lineHeight: 1.2,
-          },
-        },
-        cleanText
-      )
-    )
+    innerContent
   );
 
   const svg = await satori(el, { width: opts.maxWidth, height: pillH, fonts });
@@ -1668,10 +2363,10 @@ async function generateSocialArtworkFromApprovedRefs(
     isCustomBrand
       ? contexto?.paleta ||
         buildBrandPalette({
-          primaria: "#0078FC",
-          secundaria: "#142A4D",
-          papel: "#F6F7F9",
-          tinta: "#18212A",
+          primaria: "#334155",
+          secundaria: "#475569",
+          papel: "#F8FAFC",
+          tinta: "#0F172A",
         })
       : null;
 
@@ -1696,27 +2391,48 @@ async function generateSocialArtworkFromApprovedRefs(
   const getCustomExtraContactLines = (): string[] => {
     if (!isCustomBrand) return [];
     const maxLinhas = rede.composicao.maxLinhasContactos ?? 0;
-    if (maxLinhas <= 0) return [];
-    const raw = (contexto?.textosPedidos || []).map((s) => s.trim()).filter(Boolean);
     const nomeLow = (contexto?.nome || "").trim().toLowerCase();
-    const sloganLow = (contexto?.slogan || "").trim().toLowerCase();
-    return raw
-      .filter((t) => {
-        const low = t.toLowerCase();
-        if (!contexto?.simbolo) {
-          if (nomeLow && low === nomeLow) return false;
-          if (sloganLow && low === sloganLow) return false;
-        } else {
-          if (nomeLow && low === nomeLow) return false;
-        }
-        return true;
-      })
-      .slice(0, maxLinhas);
+    const sloganTrim = (contexto?.slogan || "").trim();
+    const sloganLow = sloganTrim.toLowerCase();
+
+    if (maxLinhas <= 0) {
+      if (contexto?.simbolo && hierarquia.incluirSlogan && sloganTrim) {
+        return [sloganTrim];
+      }
+      return [];
+    }
+
+    const raw = (contexto?.textosPedidos || []).map((s) => s.trim()).filter(Boolean);
+    const filtered = raw.filter((t) => {
+      const low = t.toLowerCase();
+      if (nomeLow && low === nomeLow) return false;
+      if (!contexto?.simbolo && sloganLow && low === sloganLow) return false;
+      return true;
+    });
+
+    const selected: string[] = [];
+    let charBudget = rede.id === "ig-story" ? 44 : 76;
+    for (const item of filtered) {
+      if (selected.length >= maxLinhas) break;
+      if (
+        selected.length > 0 &&
+        item.length > charBudget &&
+        filtered.some(
+          (f) => f !== item && f.length <= charBudget && !selected.includes(f)
+        )
+      ) {
+        continue;
+      }
+      selected.push(item);
+      charBudget = Math.max(12, charBudget - item.length);
+    }
+    return selected;
   };
 
   const placeBrandInfoInBox = async (
     box: { x: number; y: number; width: number; height: number },
-    mode: "inline" | "stack" | "stack-compact" | "vertical-highlighted"
+    mode: "inline" | "stack" | "stack-compact" | "vertical-highlighted",
+    align: "center" | "left" = "center"
   ) => {
     if (customParts && customPaletaResolved && customStats) {
       const contactLines =
@@ -1731,10 +2447,12 @@ async function generateSocialArtworkFromApprovedRefs(
               estiloVisual,
               paleta: customPaletaResolved,
               fontPairId: contexto?.fontPairId,
+              tom: contexto?.tom,
+              sector: contexto?.sector,
             })
           : null;
 
-      const gapPill = pill ? Math.max(24, Math.round(box.height * 0.055)) : 0;
+      const gapPill = pill ? Math.max(24, Math.round(box.height * 0.05)) : 0;
       const pillReservedH = pill ? pill.height + gapPill : 0;
       const logoSlotH = Math.max(48, box.height - pillReservedH);
 
@@ -1796,6 +2514,7 @@ async function generateSocialArtworkFromApprovedRefs(
           wordmarkBuf: inlineParts.wordmark,
           targetW: maxInnerW,
           targetH: maxInnerH,
+          align,
         });
         rawLogoBuf = inline.buffer;
       } else {
@@ -1849,9 +2568,12 @@ async function generateSocialArtworkFromApprovedRefs(
 
       const totalBlockH = logoOverlayH + (pill ? gapPill + pill.height : 0);
       const startY = box.y + Math.max(0, Math.round((box.height - totalBlockH) / 2));
-      const logoLeft = box.x + Math.max(0, Math.round((box.width - logoOverlayW) / 2));
+      const logoLeft =
+        align === "left"
+          ? box.x
+          : box.x + Math.max(0, Math.round((box.width - logoOverlayW) / 2));
 
-      // Se aplicámos variante de fundo escuro diretamente sem placa opaca, junta halo radial sem arestas atrás da mascote
+      // Se aplicámos variante de fundo escuro diretamente sem placa opaca, junta halo radial sem arestas atrás do emblema
       if (darkAdapted?.appliedKnockout) {
         const radius = Math.max(48, Math.round(logoOverlayH * 1.12));
         const diameter = radius * 2;
@@ -1873,8 +2595,8 @@ async function generateSocialArtworkFromApprovedRefs(
         if (cropW >= 32 && cropH >= 32) {
           const glowRgb = mixRgbChannels(
             hexToRgb(customPaletaResolved.primaria.hex),
-            { r: 210, g: 235, b: 255 },
-            0.38
+            hexToRgb(mixHex(customPaletaResolved.papel.hex, "#FFFFFF", 0.6)),
+            0.42
           );
           let haloBuf = await createMascotBacklightGlow(diameter, glowRgb, 0.34);
           if (cropW < diameter || cropH < diameter) {
@@ -1893,9 +2615,13 @@ async function generateSocialArtworkFromApprovedRefs(
 
       overlays.push({ input: logoOverlayBuf, left: logoLeft, top: startY });
       if (pill) {
+        const pillLeft =
+          align === "left"
+            ? box.x
+            : box.x + Math.max(0, Math.round((box.width - pill.width) / 2));
         overlays.push({
           input: pill.buffer,
-          left: box.x + Math.max(0, Math.round((box.width - pill.width) / 2)),
+          left: pillLeft,
           top: startY + logoOverlayH + gapPill,
         });
       }
@@ -1911,6 +2637,7 @@ async function generateSocialArtworkFromApprovedRefs(
         targetW: box.width,
         targetH: box.height,
         gapRatio: W / Math.max(1, H) >= 5 ? 0.04 : 0.05,
+        align,
       });
       overlays.push({ input: inline.buffer, left: box.x, top: box.y });
       return;
@@ -1923,6 +2650,7 @@ async function generateSocialArtworkFromApprovedRefs(
         sloganBuf: hierarquia.incluirSlogan ? fornoParts.sloganCrop : undefined,
         targetW: box.width,
         targetH: box.height,
+        align,
       });
       overlays.push({ input: stack, left: box.x, top: box.y });
       return;
@@ -1935,6 +2663,7 @@ async function generateSocialArtworkFromApprovedRefs(
         mode === "stack" && hierarquia.incluirSlogan ? fornoParts.sloganCrop : undefined,
       targetW: box.width,
       targetH: box.height,
+      align,
     });
     overlays.push({ input: stack, left: box.x, top: box.y });
   };
@@ -2130,58 +2859,78 @@ async function generateSocialArtworkFromApprovedRefs(
   if (disposicao === "horizontal-bipartida") {
     adapted = true;
 
+    const baseLeft = mob.x + 24;
+    const deskRightLeft =
+      rede.avatarOverlapDesktop &&
+      baseLeft < rede.avatarOverlapDesktop.x + rede.avatarOverlapDesktop.width
+        ? Math.max(
+            baseLeft,
+            rede.avatarOverlapDesktop.x + rede.avatarOverlapDesktop.width + 16
+          )
+        : baseLeft;
+
+    const verticalBlockers = [
+      rede.avatarOverlapDesktop,
+      rede.avatarOverlapMobile,
+    ].filter(
+      (av): av is SafeZoneRect =>
+        Boolean(av) && av!.x + av!.width >= deskRightLeft - 24
+    );
+    const minBlockerTop = verticalBlockers.reduce(
+      (acc, av) => Math.min(acc, av.y),
+      H
+    );
+    const infoTop = mob.y + Math.max(14, Math.round(mob.height * 0.04));
+    const canSitCleanlyAboveAvatars = minBlockerTop - 18 - infoTop >= 215;
+
+    const infoLeft = canSitCleanlyAboveAvatars
+      ? deskRightLeft
+      : Math.max(mob.x + 22, deskMobAvatarRight + 10);
+
+    const splitX = Math.min(
+      Math.round(W * 0.5),
+      Math.round(mob.x + mob.width * 0.56)
+    );
+    const infoWidth = Math.max(260, splitX - infoLeft - 14);
+    const maxSafeBottom = canSitCleanlyAboveAvatars
+      ? minBlockerTop - 18
+      : mob.y + mob.height - 14;
+    const infoHeight = Math.max(180, maxSafeBottom - infoTop);
+
     if (isCustomBrand) {
-      // Coloca o bloco informativo estritamente acima da altura dos avatares e à direita do avatar desktop
-      const minAvatarTop = Math.min(
-        rede.avatarOverlapDesktop ? rede.avatarOverlapDesktop.y : H,
-        rede.avatarOverlapMobile ? rede.avatarOverlapMobile.y : H
-      );
-      const desktopClearLeft = rede.avatarOverlapDesktop
-        ? Math.max(mob.x + 24, rede.avatarOverlapDesktop.x + rede.avatarOverlapDesktop.width + 16)
-        : mob.x + 24;
-      const mobLeftIfAboveAvatar = mob.x + 24;
-      const canSitCleanlyAboveBothAvatars = minAvatarTop - (mob.y + 18) >= 215;
-
-      const infoLeft = canSitCleanlyAboveBothAvatars
-        ? rede.avatarOverlapDesktop && mob.x + 24 < rede.avatarOverlapDesktop.x + rede.avatarOverlapDesktop.width
-          ? desktopClearLeft
-          : mobLeftIfAboveAvatar
-        : Math.max(mob.x + 22, deskMobAvatarRight + 10);
-
-      const splitX = Math.round(mob.x + mob.width * 0.65);
-      const infoWidth = Math.max(300, splitX - infoLeft - 14);
-      const infoTop = mob.y + Math.max(14, Math.round(mob.height * 0.04));
-      const maxSafeBottom = canSitCleanlyAboveBothAvatars
-        ? minAvatarTop - 18
-        : mob.y + mob.height - 14;
-      const infoHeight = Math.max(180, maxSafeBottom - infoTop);
-
       if (estiloVisual === "classico") {
         overlays.push(
-          ...(await makeClassicDoubleBorderOverlays(W, H, Math.round(H * 0.032), borderColorRgb, 0.48))
+          ...(await makeClassicDoubleBorderOverlays(
+            W,
+            H,
+            Math.round(H * 0.032),
+            borderColorRgb,
+            0.48
+          ))
         );
       }
 
       await placeBrandInfoInBox(
         { x: infoLeft, y: infoTop, width: infoWidth, height: infoHeight },
-        "stack"
+        "stack",
+        "left"
       );
     } else if (fornoParts) {
-      const infoLeft = Math.max(mob.x + 22, deskMobAvatarRight + 10);
-      const splitX = Math.round(mob.x + mob.width * 0.625);
-      const infoWidth = Math.max(260, splitX - infoLeft - 14);
-      const infoTop = mob.y + Math.max(14, Math.round(mob.height * 0.04));
-      const infoHeight = Math.max(200, mob.height - Math.max(28, Math.round(mob.height * 0.08)));
-
       const rightSceneStart = splitX - 18;
       const rightSceneW = W - rightSceneStart;
 
       if (estiloVisual === "moderno") {
         const leftTopBleedW = Math.max(120, Math.round(mob.x * 0.96));
-        const leftTopBleedH = Math.max(120, (rede.avatarOverlapDesktop?.y || Math.round(H * 0.6)) - 20);
+        const leftTopBleedH = Math.max(
+          120,
+          (rede.avatarOverlapDesktop?.y || Math.round(H * 0.6)) - 20
+        );
         const leftBleed = await featherAndTintLayer(
           await sharp(fornoParts.breadSoftScene)
-            .resize(leftTopBleedW, leftTopBleedH, { fit: "cover", position: "centre" })
+            .resize(leftTopBleedW, leftTopBleedH, {
+              fit: "cover",
+              position: "centre",
+            })
             .blur(1.25)
             .png()
             .toBuffer(),
@@ -2211,18 +2960,30 @@ async function generateSocialArtworkFromApprovedRefs(
         );
         overlays.push({ input: heroRightClassic, left: rightSceneStart, top: 0 });
         overlays.push(
-          ...(await makeClassicDoubleBorderOverlays(W, H, Math.round(H * 0.032), borderColorRgb, 0.5))
+          ...(await makeClassicDoubleBorderOverlays(
+            W,
+            H,
+            Math.round(H * 0.032),
+            borderColorRgb,
+            0.5
+          ))
         );
       }
 
       await placeBrandInfoInBox(
         { x: infoLeft, y: infoTop, width: infoWidth, height: infoHeight },
-        "stack"
+        "stack",
+        "left"
       );
     }
 
     const finalBuf = await sharp({
-      create: { width: W, height: H, channels: 4, background: { ...canvasBgRgb, alpha: 1 } },
+      create: {
+        width: W,
+        height: H,
+        channels: 4,
+        background: { ...canvasBgRgb, alpha: 1 },
+      },
     })
       .composite(overlays)
       .flatten({ background: canvasBgRgb })
@@ -2436,7 +3197,7 @@ async function generateSocialArtworkFromApprovedRefs(
     if (estiloVisual === "classico") {
       overlays.push(...(await makeClassicDoubleBorderOverlays(W, H, 26, borderColorRgb, 0.48)));
     }
-    const feedPadY = Math.round(mob.height * 0.12);
+    const feedPadY = Math.round(mob.height * 0.08);
     await placeBrandInfoInBox(
       {
         x: mob.x + 32,
@@ -2493,7 +3254,7 @@ export class FalsoImagemProvider implements ImagemProvider {
           count === 2 && i === 1 && formato === "logotipo-classico"
             ? "logotipo-moderno"
             : formato;
-        const gen = await generateLogoFromApprovedRefs(effFormato, ronda);
+        const gen = await generateLogoFromApprovedRefs(effFormato, ronda, contexto);
         results.push({
           buffer: gen.buffer,
           mimeType: "image/png",
@@ -2580,13 +3341,16 @@ export class FalsoImagemProvider implements ImagemProvider {
   async editar(
     imagem: Buffer,
     instrucao: string,
-    _contexto?: ImagemContexto
+    contexto?: ImagemContexto
   ): Promise<ImagemResultado> {
     const cleanInstr = (instrucao || "").trim().toLowerCase();
 
     let pipe = sharp(imagem).ensureAlpha();
-    if (cleanInstr.includes("modern") || cleanInstr.includes("verde")) {
-      const mod = await generateLogoFromApprovedRefs("logotipo-moderno", 2);
+    if (
+      cleanInstr.includes("modern") ||
+      (isDefaultFornoBrand(contexto?.nome) && cleanInstr.includes("verde"))
+    ) {
+      const mod = await generateLogoFromApprovedRefs("logotipo-moderno", 2, contexto);
       return {
         buffer: mod.buffer,
         mimeType: "image/png",

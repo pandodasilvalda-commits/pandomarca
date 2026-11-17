@@ -490,6 +490,22 @@ export async function gerarPropostasLogotipoRonda(params: {
     coresEvitar: params.coresEvitar || "Clichés complexos e gradientes fotorealistas",
   });
 
+  const palettes = getDistinctPalettesForRound(ronda, tom, sector);
+  const fontClassica = resolverParTipograficoMarca({
+    tom,
+    sector,
+    estiloDirecao: "classico",
+  });
+  const rawFontModerna = resolverParTipograficoMarca({
+    tom,
+    sector,
+    estiloDirecao: "moderno",
+  });
+  const fontModerna =
+    rawFontModerna === fontClassica
+      ? resolveContrastingSecondaryFontPair(fontClassica, tom)
+      : rawFontModerna;
+
   const provider = getImagemProvider();
   const ctxBase: ImagemContexto = {
     nome: params.nome,
@@ -508,10 +524,14 @@ export async function gerarPropostasLogotipoRonda(params: {
     provider.gerar(promptClassico.promptFinal, "logotipo-classico", 1, {
       ...ctxBase,
       estilo: "classico",
+      paleta: palettes.classica,
+      fontPairId: fontClassica,
     }),
     provider.gerar(promptModerno.promptFinal, "logotipo-moderno", 1, {
       ...ctxBase,
       estilo: "moderno",
+      paleta: palettes.moderna,
+      fontPairId: fontModerna,
     }),
   ]);
 
@@ -526,22 +546,6 @@ export async function gerarPropostasLogotipoRonda(params: {
     contarRonda: true,
     detalhe: `Ronda ${ronda} (${tomSpec.nome}): Clássica + Moderna`,
   });
-
-  const palettes = getDistinctPalettesForRound(ronda, tom, sector);
-  const fontClassica = resolverParTipograficoMarca({
-    tom,
-    sector,
-    estiloDirecao: "classico",
-  });
-  const rawFontModerna = resolverParTipograficoMarca({
-    tom,
-    sector,
-    estiloDirecao: "moderno",
-  });
-  const fontModerna =
-    rawFontModerna === fontClassica
-      ? resolveContrastingSecondaryFontPair(fontClassica, tom)
-      : rawFontModerna;
 
   const propostaClassica: LogoPropostaIA = {
     id: `ia-classica-r${ronda}`,
@@ -643,6 +647,8 @@ export async function ajustarPropostaLogotipo(params: {
     sector: params.sector || "restauracao",
     tom,
     estilo: params.proposta.estilo,
+    paleta: params.proposta.sugestaoPaleta,
+    fontPairId: params.proposta.sugestaoFontPairId,
   });
 
   const orcamentoDepois = verificarERegistarCusto({

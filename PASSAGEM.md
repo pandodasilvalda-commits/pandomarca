@@ -1,14 +1,14 @@
 # PASSAGEM — PandoMarca
 
-> Última atualização: 2026-11-17 19:59 (Lisboa) · por Antigravity
+> Última atualização: 2026-11-17 20:15 (Lisboa) · por Antigravity
 > Última verificação de quota: Antigravity (relato do operador, 16/11/2026, Lisboa): Gemini semanal 71 % · 5 h 96 % · Argon semanal 14 % · Claude/GPT 100 % · renovação semanal 23/11/2026 ~11h–12h Lisboa. Não verificada de novo nesta sessão.
 
 ## 1. Objetivo do produto
 O PandoMarca é o kit de identidade visual da PandoWeb para PME: parte de um logótipo (gerado na Entrada A ou carregado na Entrada B) e entrega um ZIP com exactamente 38 ficheiros (variantes, 18 peças para redes sociais, favicon, assinatura de email, cartão, papel de carta e guia). Toda a geração visual é só por imagem: o logótipo escolhido é a referência obrigatória de todas as peças seguintes. A interface, a documentação e os ficheiros gerados estão em pt-PT.
 
 ## 2. Fase atual
-- Fase: pedido «msg9 + complemento multi-marca» (em curso — Passo 1 concluído) em modo de demonstração (`IMAGEM_MODO=falso`)
-- Estado: **Passo 1** concluído (`tsc` 0 erros e **17/17** Vitest OK): motor tipográfico genérico em `lib/formats.ts`, `lib/fonts.ts`, `lib/palette.ts`, `lib/generate/pieces.ts` e sincronismo no wizard/APIs (6 pares tipográficos incluindo `classica` serifada intencional, zero serifas por omissão em marcas técnicas/modernas, pesos `400..800` embebidos e legibilidade de impressão aumentada); seguem-se o Passo 2 (legibilidade IG no telemóvel, alinhamento FB/X, multi-marca e `docs/DIRETRIZES.md`) e Passo 3 (testes + capturas Antes/Depois e multi-marca).
+- Fase: pedido «msg9 + complemento multi-marca» (em curso — **Passos 1 e 2 concluídos**) em modo de demonstração (`IMAGEM_MODO=falso`)
+- Estado: **Passo 2** concluído (`tsc` 0 erros e **17/17** Vitest OK): pílulas IG para telemóvel com `38–42 px` em 1–3 linhas equilibradas na tipografia própria da marca, ancoragem à esquerda em `fb-capa`/`x-cabecalho` acima e à direita dos avatares, isolamento multi-marca nas Entradas A e B (zero valores fixos da PandoWeb e zero fugas do ensaio Forno da Vilariça), amostras multi-tom (`vertice-digital`, `quinta-do-alvor`, `atelier-terra-viva`) em `lib/samples.ts` e criação de `docs/DIRETRIZES.md` referenciado em `AGENTS.md`. Falta o **Passo 3** (testes multi-marca alargados, folhas Antes/Depois e multi-marca em `docs/revisao/correcoes-tipografia/` com inspeção visual, e gate completo `tsc`, `lint`, `test`, `build`).
 
 ## 3. Feito (com commits)
 | Data | Commit | O quê |
@@ -22,27 +22,26 @@ O PandoMarca é o kit de identidade visual da PandoWeb para PME: parte de um log
 | 2026-11-16 | `8d200ea` | Documentação de passagem: `PASSAGEM.md`, `AGENTS.md` e `docs/REGRAS_LIMITES.md` |
 | 2026-11-16 | `52ed186` | Pedido msg7: composição própria por formato em 3 camadas, auditoria móvel/avatar, vista dupla Computador + Telemóvel e 10 capturas em `docs/revisao/composicao/` |
 | 2026-11-17 | `9799e81` | Pedido msg8: Entrada B completa com PandoWeb em modo falso usando o logótipo do cliente, halo radial limpo, avatares 40 px e 7 capturas em `docs/revisao/pandoweb/` |
-| 2026-11-17 | *(passo 1 msg9)* | Motor tipográfico genérico derivado do tom/sector/logótipo (`resolverParTipograficoMarca`, 6 pares incluindo `classica`), pesos `400..800` embebidos sem serifas acidentais e escalas A4/Cartão/Email aumentadas |
+| 2026-11-17 | `9f1bd27` | Pedido msg9 Passo 1: motor tipográfico genérico derivado do tom/sector/logótipo (`resolverParTipograficoMarca`, 6 pares incluindo `classica`), pesos `400..800` embebidos sem serifas acidentais e escalas A4/Cartão/Email aumentadas |
+| 2026-11-17 | *(passo 2 msg9)* | Legibilidade IG em telemóvel (`38–42 px` com `packPillLines`), ancoragem à esquerda em FB/X, isolamento multi-marca A/B, `MULTI_TONE_SAMPLE_BRANDS` em `lib/samples.ts` e `docs/DIRETRIZES.md` |
 
 ## 4. Testes
 - Comando: `npx tsc --noEmit && npm test`
-- Resultado do último run (2026-11-17 19:58 Lisboa): TypeScript 0 erros; Vitest **17/17** testes a passar (após Passo 1).
+- Resultado do último run (2026-11-17 20:15 Lisboa): TypeScript 0 erros; Vitest **17/17** testes a passar (após Passo 2, 65,17 s).
 - Ensaio E2E Playwright (2026-11-17 11:25 Lisboa): válido da etapa msg8 (`pandomarca-pandoweb.zip`, 38 ficheiros); novo ensaio visual e testes multi-marca no Passo 3.
 - Testes a falhar e porquê: nenhum.
 
 ## 5. Em curso (ponto exato onde parou)
-- Tarefa: pedido «msg9» + complemento multi-marca — **Passo 1 fechado** em `main`, pronto a iniciar o **Passo 2**.
-- Ficheiros tocados no Passo 1: `lib/formats.ts`, `lib/fonts.ts`, `lib/palette.ts`, `lib/generate/{pieces.ts,kit.ts}`, `lib/imagem/index.ts`, `app/layout.tsx`, `app/formatos/page.tsx`, `app/api/{analisar,capas,gerar,logotipo-raiz,vetorizar}/route.ts`, `components/kit-studio-wizard.tsx`, `PASSAGEM.md`.
-- Último passo concluído: correção da seleção e carregamento de tipografia para qualquer marca (sem serifas por omissão quando o tom é moderno/técnico/jovem, com par `classica` serifado disponível para marcas clássicas/tradicionais), pesos `400..800` com fallback seguro na mesma família, atualização dos PDFs (`Cartão`, `Papel A4`, `Guia A4`), assinatura HTML, SVG de paleta e interface do wizard.
+- Tarefa: pedido «msg9» + complemento multi-marca — **Passos 1 e 2 fechados** em `main`, pronto a iniciar o **Passo 3**.
+- Ficheiros tocados no Passo 2: `docs/DIRETRIZES.md`, `AGENTS.md`, `lib/samples.ts`, `lib/imagem/referencia.ts`, `lib/imagem/index.ts`, `lib/imagem/falso.ts`, `PASSAGEM.md`.
+- Último passo concluído: isolamento genérico multi-marca no gerador em modo falso (Entradas A e B sem cores fixas nem fugas de padaria), pílulas móveis IG (`>= 38–42 px` em 1–3 linhas equilibradas com contraste WCAG AA `>= 4,5:1`), ancoragem à esquerda acima/à direita dos avatares em `fb-capa`/`x-cabecalho`, amostras multi-tom (`tecnico`, `tradicional`, `natural`) em `lib/samples.ts` e diretrizes práticas em `docs/DIRETRIZES.md`.
 - Falta:
-  - Passo 2: legibilidade da pílula IG em telemóvel (`lib/imagem/falso.ts`), ancoragem à esquerda na capa Facebook/X acima dos avatares, amostras multi-marca em `lib/samples.ts` e criação de `docs/DIRETRIZES.md` (referenciado em `AGENTS.md`).
-  - Passo 3: expansão dos testes multi-marca (`PandoWeb` + >= 3 marcas de tons distintos, Entrada A e B), geração/inspeção visual das folhas Antes/Depois e multi-marca em `docs/revisao/correcoes-tipografia/` e gate completo (`tsc`, `lint`, `test`, `build`).
+  - **Passo 3**: expandir `tests/pandomarca.test.ts` (verificação integral de `FONT_PAIRS` locais `400..800`, PandoWeb + 3 marcas multi-tom em Entrada A e Entrada B, centróide à esquerda no FB, pílula IG nítida e zero fugas), gerar e inspecionar visualmente 5 folhas Antes/Depois e multi-marca em `docs/revisao/correcoes-tipografia/`, correr gate completo (`tsc`, `lint`, `test`, `build`).
 - Ramo: `main`
 
 ## 6. Próximos passos (por ordem, cada um verificável)
-1. **Passo 2 (msg9):** atualizar `lib/imagem/falso.ts` (pílula IG `>= 38 px` em 1–2 linhas + ancoragem à esquerda em `fb-capa`/`x-cabecalho` sem hardcodes de marca), adicionar presets multi-marca com tons variados em `lib/samples.ts` e criar `docs/DIRETRIZES.md` referenciado em `AGENTS.md`.
-2. **Passo 3 (msg9):** expandir `tests/pandomarca.test.ts` (fontes, contrastes, zonas seguras, centróide à esquerda no FB, multi-marca sans vs serifada intencional), gerar e inspecionar visualmente todas as capturas Antes/Depois e multi-marca em `docs/revisao/correcoes-tipografia/`, correr `tsc && lint && test && build`, atualizar `PASSAGEM.md` e fechar msg9.
-3. Depois da aprovação visual pelo Bernardo e decisão explícita sobre fornecedor/orçamento: ligar modo real Gemini em ambiente local de teste sem publicação.
+1. **Passo 3 (msg9):** expandir `tests/pandomarca.test.ts` (fontes, contrastes, zonas seguras, centróide à esquerda no FB, multi-marca sans vs serifada intencional na Entrada A e B), gerar e inspecionar visualmente as 5 folhas Antes/Depois e multi-marca em `docs/revisao/correcoes-tipografia/`, correr `tsc && lint && test && build`, atualizar `PASSAGEM.md` e fechar msg9.
+2. Depois da aprovação visual pelo Bernardo e decisão explícita sobre fornecedor/orçamento: ligar modo real Gemini em ambiente local de teste sem publicação.
 
 ## 7. Decisões tomadas (não voltar atrás sem falar com o Bernardo)
 - 2026-11-16 — Geração só de imagem, sem vetores desenhados por código nas peças sociais — o Bernardo rejeitou a composição por SVG/regras; não ficava bem.
@@ -87,3 +86,4 @@ O PandoMarca é o kit de identidade visual da PandoWeb para PME: parte de um log
 | 2026-11-16 22:18 | Antigravity | Concluído pedido msg7: composição própria por formato em 3 camadas, auditoria móvel/avatar, vista dupla lado a lado e 10 capturas em `docs/revisao/composicao/` |
 | 2026-11-17 11:26 | Antigravity | Concluído pedido msg8: Entrada B completa com PandoWeb em modo falso usando o logótipo do cliente, halo radial limpo, avatares 40 px e 7 capturas em `docs/revisao/pandoweb/` |
 | 2026-11-17 19:59 | Antigravity | Pedido msg9 Passo 1: motor tipográfico genérico por tom/sector/logótipo (6 pares), pesos 400–800 embebidos e escalas A4/Cartão/Assinatura melhoradas |
+| 2026-11-17 20:15 | Antigravity | Pedido msg9 Passo 2: pílula IG 38–42 px legível, ancoragem esquerda FB/X, isolamento multi-marca Entradas A/B, presets em lib/samples.ts e docs/DIRETRIZES.md |
