@@ -1,14 +1,14 @@
 # PASSAGEM — PandoMarca
 
-> Última atualização: 2026-11-17 11:26 (Lisboa) · por Antigravity
+> Última atualização: 2026-11-17 19:59 (Lisboa) · por Antigravity
 > Última verificação de quota: Antigravity (relato do operador, 16/11/2026, Lisboa): Gemini semanal 71 % · 5 h 96 % · Argon semanal 14 % · Claude/GPT 100 % · renovação semanal 23/11/2026 ~11h–12h Lisboa. Não verificada de novo nesta sessão.
 
 ## 1. Objetivo do produto
 O PandoMarca é o kit de identidade visual da PandoWeb para PME: parte de um logótipo (gerado na Entrada A ou carregado na Entrada B) e entrega um ZIP com exactamente 38 ficheiros (variantes, 18 peças para redes sociais, favicon, assinatura de email, cartão, papel de carta e guia). Toda a geração visual é só por imagem: o logótipo escolhido é a referência obrigatória de todas as peças seguintes. A interface, a documentação e os ficheiros gerados estão em pt-PT.
 
 ## 2. Fase atual
-- Fase: arquitetura só-imagem em modo de demonstração (`IMAGEM_MODO=falso`), com suporte completo da Entrada B para logótipos reais de clientes sem fugas do ensaio anterior (`lib/logo-surface.ts`, `lib/imagem/falso.ts`, `lib/generate/kit.ts` e `app/api/capas/route.ts`)
-- Estado: pedido «msg8» concluído e validado com a marca **PandoWeb** em `IMAGEM_MODO=falso` (**17/17** testes Vitest, `tsc`/`lint`/`next build` OK, E2E Playwright Entrada B completo com `pandomarca-pandoweb.zip` de 38 ficheiros e 7 folhas de revisão em `docs/revisao/pandoweb/`); aguarda revisão humana do Bernardo antes da decisão do modo real
+- Fase: pedido «msg9 + complemento multi-marca» (em curso — Passo 1 concluído) em modo de demonstração (`IMAGEM_MODO=falso`)
+- Estado: **Passo 1** concluído (`tsc` 0 erros e **17/17** Vitest OK): motor tipográfico genérico em `lib/formats.ts`, `lib/fonts.ts`, `lib/palette.ts`, `lib/generate/pieces.ts` e sincronismo no wizard/APIs (6 pares tipográficos incluindo `classica` serifada intencional, zero serifas por omissão em marcas técnicas/modernas, pesos `400..800` embebidos e legibilidade de impressão aumentada); seguem-se o Passo 2 (legibilidade IG no telemóvel, alinhamento FB/X, multi-marca e `docs/DIRETRIZES.md`) e Passo 3 (testes + capturas Antes/Depois e multi-marca).
 
 ## 3. Feito (com commits)
 | Data | Commit | O quê |
@@ -21,25 +21,28 @@ O PandoMarca é o kit de identidade visual da PandoWeb para PME: parte de um log
 | 2026-11-16 | `4ad873f` | Só-imagem: referência obrigatória, zonas seguras desktop/telemóvel, 38 formatos, 18 redes em `lib/config/redes-sociais.ts`, capturas em `docs/revisao/so-imagem/` |
 | 2026-11-16 | `8d200ea` | Documentação de passagem: `PASSAGEM.md`, `AGENTS.md` e `docs/REGRAS_LIMITES.md` |
 | 2026-11-16 | `52ed186` | Pedido msg7: composição própria por formato em 3 camadas, auditoria móvel/avatar, vista dupla Computador + Telemóvel e 10 capturas em `docs/revisao/composicao/` |
-| 2026-11-17 | `msg8` (atual) | Entrada B verificada com o logótipo real da PandoWeb (`docs/referencias/pandoweb/pandoweb-logo-v2.png`): paleta extraída do cliente, knockout em fundo escuro mantendo azul eléctrico/mascote + halo radial limpo, isolamento da mascote nos avatares a 40 px e 7 capturas em `docs/revisao/pandoweb/` |
+| 2026-11-17 | `9799e81` | Pedido msg8: Entrada B completa com PandoWeb em modo falso usando o logótipo do cliente, halo radial limpo, avatares 40 px e 7 capturas em `docs/revisao/pandoweb/` |
+| 2026-11-17 | *(passo 1 msg9)* | Motor tipográfico genérico derivado do tom/sector/logótipo (`resolverParTipograficoMarca`, 6 pares incluindo `classica`), pesos `400..800` embebidos sem serifas acidentais e escalas A4/Cartão/Email aumentadas |
 
 ## 4. Testes
-- Comando: `npx tsc --noEmit && npm run lint && npm test && npm run build`
-- Resultado do último run (2026-11-17 11:24 Lisboa): TypeScript 0 erros; ESLint 0 erros (18 avisos pré-existentes de `<img>` e parâmetros `_`); Vitest **17/17** testes a passar (inclui teste completo PandoWeb Entrada B sem resíduos de ensaios anteriores); Next.js `build` OK.
-- Ensaio E2E Playwright (2026-11-17 11:25 Lisboa): percurso integral Entrada B `/criar` (`kit-website-demo`, desktop `1440×960` e telemóvel `390×844` com `overflow=0px`, 0 erros consola/HTTP), `pandomarca-pandoweb.zip` extraído com 38 ficheiros, PDFs renderizados com `pdftoppm`, assinatura HTML validada e 7 capturas inspecionadas em `docs/revisao/pandoweb/`.
+- Comando: `npx tsc --noEmit && npm test`
+- Resultado do último run (2026-11-17 19:58 Lisboa): TypeScript 0 erros; Vitest **17/17** testes a passar (após Passo 1).
+- Ensaio E2E Playwright (2026-11-17 11:25 Lisboa): válido da etapa msg8 (`pandomarca-pandoweb.zip`, 38 ficheiros); novo ensaio visual e testes multi-marca no Passo 3.
 - Testes a falhar e porquê: nenhum.
 
 ## 5. Em curso (ponto exato onde parou)
-- Tarefa: pedido «msg8» concluído e entregue em `main`.
-- Ficheiros tocados: `lib/logo-surface.ts`, `lib/generate/{pieces.ts,kit.ts}`, `lib/imagem/{falso.ts,index.ts,referencia.ts,types.ts}`, `app/api/capas/route.ts`, `components/kit-studio-wizard.tsx`, `tests/pandomarca.test.ts`, `docs/referencias/pandoweb/pandoweb-logo-v2.png`, `docs/revisao/pandoweb/*.png`, `PASSAGEM.md`.
-- Último passo concluído: substituição do halo rectangular por brilho radial circular sem arestas atrás da mascote nas peças escuras, ajuste tipográfico (`Manrope`) na pílula de contactos e inspeção visual final das 7 folhas + ficheiros brutos exportados do ZIP.
-- Falta: revisão humana das capturas em `docs/revisao/pandoweb/` e `docs/revisao/composicao/` pelo Bernardo e decisão explícita sobre fornecedor/orçamento para o modo real.
+- Tarefa: pedido «msg9» + complemento multi-marca — **Passo 1 fechado** em `main`, pronto a iniciar o **Passo 2**.
+- Ficheiros tocados no Passo 1: `lib/formats.ts`, `lib/fonts.ts`, `lib/palette.ts`, `lib/generate/{pieces.ts,kit.ts}`, `lib/imagem/index.ts`, `app/layout.tsx`, `app/formatos/page.tsx`, `app/api/{analisar,capas,gerar,logotipo-raiz,vetorizar}/route.ts`, `components/kit-studio-wizard.tsx`, `PASSAGEM.md`.
+- Último passo concluído: correção da seleção e carregamento de tipografia para qualquer marca (sem serifas por omissão quando o tom é moderno/técnico/jovem, com par `classica` serifado disponível para marcas clássicas/tradicionais), pesos `400..800` com fallback seguro na mesma família, atualização dos PDFs (`Cartão`, `Papel A4`, `Guia A4`), assinatura HTML, SVG de paleta e interface do wizard.
+- Falta:
+  - Passo 2: legibilidade da pílula IG em telemóvel (`lib/imagem/falso.ts`), ancoragem à esquerda na capa Facebook/X acima dos avatares, amostras multi-marca em `lib/samples.ts` e criação de `docs/DIRETRIZES.md` (referenciado em `AGENTS.md`).
+  - Passo 3: expansão dos testes multi-marca (`PandoWeb` + >= 3 marcas de tons distintos, Entrada A e B), geração/inspeção visual das folhas Antes/Depois e multi-marca em `docs/revisao/correcoes-tipografia/` e gate completo (`tsc`, `lint`, `test`, `build`).
 - Ramo: `main`
 
 ## 6. Próximos passos (por ordem, cada um verificável)
-1. Rever as 7 capturas Entrada B da PandoWeb em `docs/revisao/pandoweb/` (junto com as 10 capturas em `docs/revisao/composicao/`) — ter presente que `IMAGEM_MODO=falso` usa composição de estúdio a partir da paleta do logótipo carregado, não mostrando ainda fundos fotográficos/texturas generativas integrados pelo Gemini em torno do emblema nem variações criativas entre rondas — critério de «feito»: revisão aprovada pelo Bernardo.
-2. Bernardo decide o fornecedor e o orçamento do modo real (recomendação já feita: Nano Banana 2.1, cerca de 0,60 USD por kit) — critério de «feito»: ordem explícita, por escrito.
-3. Só depois dessa ordem: ligar o adaptador Gemini em ambiente local de teste, com `GEMINI_API_KEY` só em variáveis de ambiente, sem publicação — critério de «feito»: modo real a gerar no computador de desenvolvimento, testes a passar, sem custos escondidos.
+1. **Passo 2 (msg9):** atualizar `lib/imagem/falso.ts` (pílula IG `>= 38 px` em 1–2 linhas + ancoragem à esquerda em `fb-capa`/`x-cabecalho` sem hardcodes de marca), adicionar presets multi-marca com tons variados em `lib/samples.ts` e criar `docs/DIRETRIZES.md` referenciado em `AGENTS.md`.
+2. **Passo 3 (msg9):** expandir `tests/pandomarca.test.ts` (fontes, contrastes, zonas seguras, centróide à esquerda no FB, multi-marca sans vs serifada intencional), gerar e inspecionar visualmente todas as capturas Antes/Depois e multi-marca em `docs/revisao/correcoes-tipografia/`, correr `tsc && lint && test && build`, atualizar `PASSAGEM.md` e fechar msg9.
+3. Depois da aprovação visual pelo Bernardo e decisão explícita sobre fornecedor/orçamento: ligar modo real Gemini em ambiente local de teste sem publicação.
 
 ## 7. Decisões tomadas (não voltar atrás sem falar com o Bernardo)
 - 2026-11-16 — Geração só de imagem, sem vetores desenhados por código nas peças sociais — o Bernardo rejeitou a composição por SVG/regras; não ficava bem.
@@ -50,6 +53,7 @@ O PandoMarca é o kit de identidade visual da PandoWeb para PME: parte de um log
 - 2026-11-16 — As referências aprovadas estão em `docs/referencias/ia-aprovada/` (`d830f9b`) e não se substituem sem o Bernardo.
 - 2026-11-16 — Ecrãs públicos sem preços inventados nem notas internas (`1cbdf07`). Preço do kit `standalone` continua «a definir». Sem checkout.
 - 2026-11-17 — Na Entrada B em modo falso, qualquer marca distinta do ensaio «Forno da Vilariça» usa a paleta e o ficheiro carregado intacto (isolando o emblema só nos avatares e preservando cores/contornos nas adaptações para fundo escuro), nunca recaindo nas imagens de padaria.
+- 2026-11-17 — O PandoMarca é genérico e multi-marca: tipografia, paleta, escalas e composições derivam do tom, sector e logótipo de cada cliente (sem valores fixos de nenhuma marca cliente, incluindo a PandoWeb; pares serifados só quando o tom/sector ou escolha manual o pedirem).
 
 ## 8. Perguntas em aberto para o Bernardo
 - [ ] Fornecedor e orçamento do modo real de geração de imagem (bloqueia: sim, o modo real)
@@ -60,7 +64,7 @@ O PandoMarca é o kit de identidade visual da PandoWeb para PME: parte de um log
 - Requisitos: Node.js 22+ e npm
 - Instalar: `npm ci` e `cp .env.example .env.local` (códigos de acesso só no `.env.local`; `IMAGEM_MODO=falso`)
 - Variáveis de ambiente: ver `.env.example` (nomes apenas, nunca valores). Chaves `GEMINI_API_KEY` e `RECRAFT_API_KEY` ficam vazias no exemplo.
-- Correr: `npm run dev` → abrir http://127.0.0.1:4317 (ensaios «Forno da Vilariça» ou Entrada B com `docs/referencias/pandoweb/pandoweb-logo-v2.png`)
+- Correr: `npm run dev` → abrir http://127.0.0.1:4317 (ensaios «Forno da Vilariça», presets multi-tom ou Entrada B com `docs/referencias/pandoweb/pandoweb-logo-v2.png`)
 - Testar: `npx tsc --noEmit && npm run lint && npm test`
 - Capturas de revisão: `docs/revisao/pandoweb/`, `docs/revisao/composicao/` (e anteriores em `docs/revisao/so-imagem/`, `docs/revisao/fase-ia/`, `docs/revisao/logotipos/`)
 
@@ -82,3 +86,4 @@ O PandoMarca é o kit de identidade visual da PandoWeb para PME: parte de um log
 | 2026-11-16 21:25 | Programador (caixa) | Criados PASSAGEM.md, AGENTS.md e docs/REGRAS_LIMITES.md; msg6 já estava em `4ad873f` |
 | 2026-11-16 22:18 | Antigravity | Concluído pedido msg7: composição própria por formato em 3 camadas, auditoria móvel/avatar, vista dupla lado a lado e 10 capturas em `docs/revisao/composicao/` |
 | 2026-11-17 11:26 | Antigravity | Concluído pedido msg8: Entrada B completa com PandoWeb em modo falso usando o logótipo do cliente, halo radial limpo, avatares 40 px e 7 capturas em `docs/revisao/pandoweb/` |
+| 2026-11-17 19:59 | Antigravity | Pedido msg9 Passo 1: motor tipográfico genérico por tom/sector/logótipo (6 pares), pesos 400–800 embebidos e escalas A4/Cartão/Assinatura melhoradas |

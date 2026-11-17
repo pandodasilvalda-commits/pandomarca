@@ -105,7 +105,14 @@ function resolveEstiloVisualKit(input: {
   return "moderno";
 }
 
-function renderPaletteSampleSvg(paleta: BrandPalette, brandName: string): string {
+function renderPaletteSampleSvg(
+  paleta: BrandPalette,
+  brandName: string,
+  fontPairId: FontPairId = "moderna"
+): string {
+  const pair = FONT_PAIRS[fontPairId] || FONT_PAIRS.moderna;
+  const titleFont = `'${pair.tituloFamily}', ${pair.tituloCssFallback}`;
+  const bodyFont = `'${pair.textoFamily}', ${pair.textoCssFallback}`;
   const entries = [
     { nome: "Primária", cor: paleta.primaria },
     { nome: "Secundária", cor: paleta.secundaria },
@@ -119,16 +126,16 @@ function renderPaletteSampleSvg(paleta: BrandPalette, brandName: string): string
       const x = 40 + idx * 188;
       return `<g transform="translate(${x}, 90)">
       <rect width="168" height="170" rx="12" fill="${item.cor.hex}" stroke="#CBD5E1" stroke-width="1.5" />
-      <text x="8" y="200" font-family="sans-serif" font-weight="700" font-size="16" fill="#0F172A">${item.nome}</text>
-      <text x="8" y="224" font-family="monospace" font-weight="600" font-size="15" fill="#334155">${item.cor.hex}</text>
-      <text x="8" y="246" font-family="sans-serif" font-size="13" fill="#64748B">rgb(${item.cor.rgb.r}, ${item.cor.rgb.g}, ${item.cor.rgb.b})</text>
+      <text x="8" y="200" font-family="${titleFont}" font-weight="${pair.tituloWeight}" font-size="16" fill="#0F172A">${item.nome}</text>
+      <text x="8" y="224" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-weight="600" font-size="15" fill="#334155">${item.cor.hex}</text>
+      <text x="8" y="246" font-family="${bodyFont}" font-size="13" fill="#64748B">rgb(${item.cor.rgb.r}, ${item.cor.rgb.g}, ${item.cor.rgb.b})</text>
     </g>`;
     })
     .join("\n    ");
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="380" viewBox="0 0 1000 380">
   <rect width="1000" height="380" rx="16" fill="#FFFFFF" />
-  <text x="40" y="54" font-family="sans-serif" font-weight="700" font-size="24" fill="#0F172A">Paleta Oficial — ${brandName.replace(/[<>&"]/g, "")}</text>
+  <text x="40" y="54" font-family="${titleFont}" font-weight="${pair.tituloWeight}" font-size="24" fill="#0F172A">Paleta Oficial — ${brandName.replace(/[<>&"]/g, "")}</text>
   ${cards}
 </svg>`;
 }
@@ -504,7 +511,7 @@ export async function generateFullBrandKit(
 
   // 6. Paleta, Tipografia e LEIA-ME (4 ficheiros)
   const paletaJson = JSON.stringify(paleta, null, 2);
-  const amostraSvg = renderPaletteSampleSvg(paleta, dados.nome);
+  const amostraSvg = renderPaletteSampleSvg(paleta, dados.nome, fontPairId);
   const tiposTxt = renderTypographyTxt(fontPairId, dados.nome);
   const slug = slugifyBrandName(dados.nome);
   const leiameTxt = renderReadmeTxt(dados, slug);

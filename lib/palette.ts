@@ -4,9 +4,10 @@ import {
   ColorEntry,
   FONT_PAIRS,
   FontPairId,
+  resolverParTipograficoMarca,
   RGBColor,
-  SECTORS,
   SectorId,
+  TomDaMarca,
 } from "./formats";
 
 export function normalizeHex(hex: string, fallback = "#1E293B"): string {
@@ -191,39 +192,72 @@ export interface PaletteAndTypeProposal {
 }
 
 const ALL_FONT_ORDER: FontPairId[] = [
+  "tecnica",
+  "moderna",
   "clara",
   "editorial",
-  "moderna",
   "confianca",
-  "tecnica",
+  "classica",
 ];
 
-function getDistinctFontPairs(basePair: FontPairId): [FontPairId, FontPairId, FontPairId, FontPairId] {
+function getDistinctFontPairs(
+  basePair: FontPairId,
+  tom?: TomDaMarca
+): [FontPairId, FontPairId, FontPairId, FontPairId] {
   const others = ALL_FONT_ORDER.filter((f) => f !== basePair);
-  // Ensure the 2nd proposal (Contrastada) always has a noticeably different font character (e.g. serif vs sans)
-  const baseIsSerifTitle = basePair === "editorial";
-  const second =
-    others.find((f) => (baseIsSerifTitle ? f !== "editorial" : f === "editorial")) || others[0];
+  const baseCategory = FONT_PAIRS[basePair]?.categoria || "sans";
+
+  let second: FontPairId;
+  if (tom === "tecnico" || tom === "jovem" || tom === "divertido") {
+    // Para tons modernos/técnicos/jovens, ambas as propostas iniciais ficam sem serifas;
+    // os pares mistos ou serifados permanecem disponíveis nas restantes opções / afinamento manual.
+    second =
+      others.find((f) => FONT_PAIRS[f].categoria === "sans") || others[0];
+  } else if (baseCategory === "sans") {
+    second =
+      others.find((f) => FONT_PAIRS[f].categoria === "misto") || others[0];
+  } else if (baseCategory === "serif") {
+    second =
+      others.find((f) => f === "editorial") ||
+      others.find((f) => FONT_PAIRS[f].categoria === "sans") ||
+      others[0];
+  } else {
+    second =
+      others.find((f) => FONT_PAIRS[f].categoria === "serif") ||
+      others.find((f) => FONT_PAIRS[f].categoria === "sans") ||
+      others[0];
+  }
+
   const remaining = others.filter((f) => f !== second);
-  return [basePair, second, remaining[0] || "moderna", remaining[1] || "tecnica"];
+  return [
+    basePair,
+    second,
+    remaining[0] || "moderna",
+    remaining[1] || "editorial",
+  ];
 }
 
 export function generateFourProposals(
   basePalette: BrandPalette,
-  sector: SectorId
+  sector: SectorId,
+  opts?: { tom?: TomDaMarca; estiloDirecao?: "classico" | "moderno" }
 ): PaletteAndTypeProposal[] {
-  const sectorSpec = SECTORS[sector] || SECTORS.outro;
-  const [font1, font2, font3, font4] = getDistinctFontPairs(sectorSpec.parSugerido);
+  const basePair = resolverParTipograficoMarca({
+    tom: opts?.tom,
+    sector,
+    estiloDirecao: opts?.estiloDirecao,
+  });
+  const [font1, font2, font3, font4] = getDistinctFontPairs(basePair, opts?.tom);
 
   const pHex = basePalette.primaria.hex;
   const sHex = basePalette.secundaria.hex;
   const pHsl = rgbToHsl(basePalette.primaria.rgb);
 
-  // 1. Direta — Fiel às cores lidas no logótipo com o par tipográfico do sector
+  // 1. Direta — Fiel às cores lidas no logótipo com o par tipográfico adaptado ao tom e sector
   const propDireta: PaletteAndTypeProposal = {
     id: "direta",
     titulo: "Direta",
-    subtitulo: "Fiel ao logótipo e ao sector",
+    subtitulo: "Fiel ao logótipo, ao tom e ao sector",
     descricao: `Mantém as cores extraídas do logótipo combinadas com o par tipográfico ${FONT_PAIRS[font1].nome} (${FONT_PAIRS[font1].tituloFamily} + ${FONT_PAIRS[font1].textoFamily}).`,
     paleta: basePalette,
     fontPairId: font1,

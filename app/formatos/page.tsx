@@ -1,6 +1,7 @@
 import Link from "next/link";
 import {
   CONTENT_STYLES,
+  FONT_CATEGORY_LABELS,
   FONT_PAIRS,
   FORMAT_SPECS,
   FormatCategory,
@@ -192,11 +193,11 @@ export default function FormatosPage() {
           <div className="flex items-center gap-2.5">
             <Type className="h-5 w-5 text-amber-800" />
             <h2 className="text-xl font-bold text-stone-900">
-              Cinco Pares Tipográficos (Fontsource OFL)
+              Seis Pares Tipográficos (Fontsource OFL)
             </h2>
           </div>
           <p className="text-sm text-stone-600">
-            Incluídos localmente no repositório para renderização determinística sem depender de chamadas à rede no momento de gerar o kit.
+            Embebidos localmente no repositório e atribuídos automaticamente consoante o tom, sector e direção visual de cada marca — sem fallbacks acidentais.
           </p>
           <div className="space-y-3">
             {Object.values(FONT_PAIRS).map((fp) => (
@@ -205,8 +206,11 @@ export default function FormatosPage() {
                 className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border border-stone-200 bg-[#FAF7F2] p-4"
               >
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="font-bold text-stone-900">{fp.nome}</span>
+                    <span className="rounded-md border border-stone-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-stone-700">
+                      {FONT_CATEGORY_LABELS[fp.categoria]}
+                    </span>
                     <span className="text-xs text-stone-500">({fp.serveSobretudo})</span>
                   </div>
                   <p className="text-xs text-stone-700 mt-1">

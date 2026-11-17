@@ -244,7 +244,10 @@ export async function POST(req: NextRequest) {
           estiloVisualEscolhido: estiloDirecao,
         };
 
-      const propostas = generateFourProposals(paletaFinal, sector);
+      const propostas = generateFourProposals(paletaFinal, sector, {
+        tom: tomFinal,
+        estiloDirecao,
+      });
       if (proposta.sugestaoFontPairId) {
         propostas[0].fontPairId = proposta.sugestaoFontPairId as FontPairId;
       }

@@ -145,7 +145,10 @@ export async function POST(req: NextRequest) {
         tom: tomFinal,
       };
 
-    const propostas = generateFourProposals(updatedMeta.paletaExtraida, sector);
+    const propostas = generateFourProposals(updatedMeta.paletaExtraida, sector, {
+      tom: tomFinal,
+      estiloDirecao: presetUsed === "oficina-do-sao" ? "moderno" : undefined,
+    });
 
     return NextResponse.json({
       ok: true,

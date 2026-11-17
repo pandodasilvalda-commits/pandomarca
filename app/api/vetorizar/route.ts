@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_COOKIE_NAME, verifyEntitlementCookie } from "@/lib/access";
 import { analyzeAndStoreLogo, validateSvgSecurity } from "@/lib/analyze-logo";
+import { TOM_DA_MARCA_SPECS, type TomDaMarca } from "@/lib/config/redes-sociais";
 import {
   BrandData,
   BrandPaletteHex,
   FONT_PAIRS,
   FontPairId,
+  resolverParTipograficoMarca,
   SECTORS,
   SectorId,
 } from "@/lib/formats";
@@ -179,9 +181,20 @@ export async function POST(req: NextRequest) {
           ? (rawDados.sector as SectorId)
           : "restauracao";
 
+      const rawTom = rawDados.tom;
+      const tom: TomDaMarca | undefined =
+        typeof rawTom === "string" && rawTom in TOM_DA_MARCA_SPECS
+          ? (rawTom as TomDaMarca)
+          : undefined;
+      const estiloDirecao =
+        body.estiloDirecao === "moderno" || body.estiloDirecao === "classico"
+          ? body.estiloDirecao
+          : undefined;
+
       const dados: BrandData = {
         nome,
         sector,
+        tom,
         simbolo: Boolean(rawDados.simbolo),
         slogan: String(rawDados.slogan || "").trim(),
         pessoa: String(rawDados.pessoa || "").trim(),
@@ -197,7 +210,7 @@ export async function POST(req: NextRequest) {
       const fontPairId: FontPairId =
         body.fontPairId && body.fontPairId in FONT_PAIRS
           ? (body.fontPairId as FontPairId)
-          : SECTORS[sector].parSugerido;
+          : resolverParTipograficoMarca({ tom, sector, estiloDirecao });
 
       const colorsList = Array.isArray(v.colorsHex) ? v.colorsHex : [];
       const paletaFallback = extractSuggestedPaletteFromColorList(colorsList);
@@ -246,11 +259,9 @@ export async function POST(req: NextRequest) {
       const logoDna = buildLogoVisualDna({
         nome: dados.nome,
         sector: dados.sector,
+        tom,
         paleta,
-        estiloDirecao:
-          body.estiloDirecao === "moderno" || body.estiloDirecao === "classico"
-            ? body.estiloDirecao
-            : undefined,
+        estiloDirecao,
         fixtureLogoOrigem:
           typeof body.fixtureNome === "string" && body.fixtureNome.trim()
             ? body.fixtureNome.trim()
@@ -264,6 +275,7 @@ export async function POST(req: NextRequest) {
       const svgByteSize = Buffer.byteLength(v.colorSvg, "utf8");
       const updated =
         updateDraftMeta(meta.id, {
+          tom,
           paletaExtraida: paleta,
           svgSource: v.colorSvg,
           vectorizedSvg: variantes.horizontalSvg,
@@ -283,7 +295,7 @@ export async function POST(req: NextRequest) {
           },
         }) || { ...meta, logoDna };
 
-      const propostas = generateFourProposals(paleta, sector);
+      const propostas = generateFourProposals(paleta, sector, { tom, estiloDirecao });
       propostas[0].fontPairId = fontPairId;
 
       return NextResponse.json({

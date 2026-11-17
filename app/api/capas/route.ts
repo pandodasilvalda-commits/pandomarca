@@ -12,6 +12,7 @@ import {
   BrandPaletteHex,
   FONT_PAIRS,
   FontPairId,
+  resolverParTipograficoMarca,
   SECTORS,
   SectorId,
 } from "@/lib/formats";
@@ -131,7 +132,11 @@ export async function POST(req: NextRequest) {
     const fontPairId: FontPairId =
       typeof body.fontPairId === "string" && body.fontPairId in FONT_PAIRS
         ? (body.fontPairId as FontPairId)
-        : SECTORS[sector].parSugerido;
+        : resolverParTipograficoMarca({
+            tom,
+            sector,
+            estiloDirecao: loaded.meta.estiloVisualEscolhido,
+          });
     const bypassCache = Boolean(body.regenerar);
 
     let pecas: PecaGeradaIA[];

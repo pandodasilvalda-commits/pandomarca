@@ -11,6 +11,7 @@ import {
   CONTENT_STYLES,
   FONT_PAIRS,
   FontPairId,
+  resolverParTipograficoMarca,
   SECTORS,
   SectorId,
   StyleGroupOverrides,
@@ -117,7 +118,11 @@ export async function POST(req: NextRequest) {
     const fontPairId: FontPairId =
       body.fontPairId && body.fontPairId in FONT_PAIRS
         ? (body.fontPairId as FontPairId)
-        : SECTORS[sector].parSugerido;
+        : resolverParTipograficoMarca({
+            tom,
+            sector,
+            estiloDirecao: loaded.meta.estiloVisualEscolhido,
+          });
 
     const kitStyle: StyleId =
       body.kitStyle && body.kitStyle in CONTENT_STYLES

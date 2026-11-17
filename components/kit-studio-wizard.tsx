@@ -42,10 +42,12 @@ import {
   BrandPalette,
   CONTENT_STYLES,
   Entitlement,
+  FONT_CATEGORY_LABELS,
   FONT_PAIRS,
   FontPairId,
   FORMAT_SPECS,
   FormatCategory,
+  resolverParTipograficoMarca,
   SECTORS,
   SectorId,
   StyleGroupOverrides,
@@ -247,7 +249,9 @@ export function KitStudioWizard() {
   const [selectedProposalId, setSelectedProposalId] = useState<string>("direta");
   const [showAllProposals, setShowAllProposals] = useState(false);
   const [customPalette, setCustomPalette] = useState<BrandPalette>(DEFAULT_PALETTE);
-  const [selectedFontPair, setSelectedFontPair] = useState<FontPairId>("clara");
+  const [selectedFontPair, setSelectedFontPair] = useState<FontPairId>(() =>
+    resolverParTipograficoMarca({ tom: "tradicional", sector: "restauracao" })
+  );
 
   // Estacionário opcional (Cartão / Papel / Assinatura)
   const [kitStyle, setKitStyle] = useState<StyleId>("degrade");
@@ -500,6 +504,13 @@ export function KitStudioWizard() {
     setTresPalavras(sample.questionarioA.tresPalavras);
     setCoresPreferidas(sample.questionarioA.coresPreferidas);
     setCoresEvitar(sample.questionarioA.coresEvitar);
+    setSelectedFontPair(
+      resolverParTipograficoMarca({
+        tom: presetTom,
+        sector: sample.dados.sector,
+        estiloDirecao: presetId === "oficina-do-sao" ? "moderno" : undefined,
+      })
+    );
     applySectorDefaultStyles(sample.dados.sector, Boolean(photoDataUrl));
     clearError();
   }
@@ -559,7 +570,12 @@ export function KitStudioWizard() {
     setPropostasPecas([]);
     setGeneratedKit(null);
     setCustomPalette(DEFAULT_PALETTE);
-    setSelectedFontPair("clara");
+    setSelectedFontPair(
+      resolverParTipograficoMarca({
+        tom: "tradicional",
+        sector: DEFAULT_BRAND_DATA.sector,
+      })
+    );
     setCacheBusters({});
     clearError();
     setStep("dados");
@@ -1514,6 +1530,14 @@ export function KitStudioWizard() {
                     onClick={() => {
                       setTom(t.id);
                       setDados((prev) => ({ ...prev, tom: t.id }));
+                      if (!draft) {
+                        setSelectedFontPair(
+                          resolverParTipograficoMarca({
+                            tom: t.id,
+                            sector: dados.sector,
+                          })
+                        );
+                      }
                     }}
                     className={`flex flex-col items-start gap-1.5 rounded-2xl border-2 p-4 text-left transition focus-visible:outline-2 focus-visible:outline-stone-900 ${
                       isSelected
@@ -1572,6 +1596,14 @@ export function KitStudioWizard() {
                   const nextSec = e.target.value as SectorId;
                   setDados({ ...dados, sector: nextSec });
                   applySectorDefaultStyles(nextSec);
+                  if (!draft) {
+                    setSelectedFontPair(
+                      resolverParTipograficoMarca({
+                        tom,
+                        sector: nextSec,
+                      })
+                    );
+                  }
                 }}
                 className="mt-1.5 w-full rounded-xl border border-stone-300 bg-[#FAF7F2] px-3.5 py-2.5 text-sm text-stone-950 focus:border-stone-900 focus:bg-white focus:outline-none"
               >
@@ -2280,7 +2312,7 @@ export function KitStudioWizard() {
                     >
                       <p
                         style={{
-                          fontFamily: fp.tituloFamily,
+                          fontFamily: `'${fp.tituloFamily}', ${fp.tituloCssFallback}`,
                           fontWeight: fp.tituloWeight,
                           color: prop.paleta.tinta.hex,
                         }}
@@ -2290,7 +2322,7 @@ export function KitStudioWizard() {
                       </p>
                       <p
                         style={{
-                          fontFamily: fp.textoFamily,
+                          fontFamily: `'${fp.textoFamily}', ${fp.textoCssFallback}`,
                           fontWeight: fp.textoWeight,
                           color: prop.paleta.primaria.hex,
                         }}
@@ -2394,7 +2426,7 @@ export function KitStudioWizard() {
               <span className="block text-xs font-bold uppercase tracking-wider text-stone-700 mb-2">
                 Par tipográfico ativo
               </span>
-              <div className="grid gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
+              <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
                 {Object.values(FONT_PAIRS).map((fp) => (
                   <button
                     key={fp.id}
@@ -2407,8 +2439,19 @@ export function KitStudioWizard() {
                         : "border-stone-200 bg-[#FAF7F2] text-stone-800 hover:border-stone-400"
                     }`}
                   >
-                    <p className="text-xs font-bold">{fp.nome}</p>
-                    <p className="text-[11px] opacity-85 mt-0.5 truncate">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-bold">{fp.nome}</p>
+                      <span
+                        className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${
+                          selectedFontPair === fp.id
+                            ? "bg-white/15 text-stone-100"
+                            : "bg-stone-200/80 text-stone-700"
+                        }`}
+                      >
+                        {FONT_CATEGORY_LABELS[fp.categoria]}
+                      </span>
+                    </div>
+                    <p className="text-[11px] opacity-85 mt-1 truncate">
                       {fp.tituloFamily} + {fp.textoFamily}
                     </p>
                   </button>

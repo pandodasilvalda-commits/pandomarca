@@ -2,32 +2,24 @@ import fs from "fs";
 import path from "path";
 import { FONT_PAIRS, FontPairId, FontPairSpec } from "./formats";
 
+type SatoriWeight = 400 | 500 | 600 | 700 | 800;
+
 export interface SatoriFontEntry {
   name: string;
   data: Buffer;
-  weight: 400 | 600 | 700;
+  weight: SatoriWeight;
   style: "normal";
 }
 
 const fontBufferCache = new Map<string, Buffer>();
 
-function loadFontFile(pkg: string, subset: "latin" | "latin-ext", weight: number): Buffer {
-  const key = `${pkg}:${subset}:${weight}`;
-  const cached = fontBufferCache.get(key);
-  if (cached) return cached;
-
-  const filePath = path.join(
-    /*turbopackIgnore: true*/ process.cwd(),
-    "node_modules",
-    "@fontsource",
-    pkg,
-    "files",
-    `${pkg}-${subset}-${weight}-normal.woff`
-  );
-  const buf = fs.readFileSync(filePath);
-  fontBufferCache.set(key, buf);
-  return buf;
-}
+const WEIGHT_FALLBACK_ORDER: Record<SatoriWeight, SatoriWeight[]> = {
+  400: [400, 500, 600, 700, 800],
+  500: [500, 400, 600, 700, 800],
+  600: [600, 700, 500, 400, 800],
+  700: [700, 600, 800, 500, 400],
+  800: [800, 700, 600, 500, 400],
+};
 
 function tryLoadFontFile(
   pkg: string,
@@ -52,69 +44,72 @@ function tryLoadFontFile(
   return buf;
 }
 
+function loadFontWeightWithSameFamilyFallback(
+  pkg: string,
+  subset: "latin" | "latin-ext",
+  targetWeight: SatoriWeight
+): Buffer {
+  for (const w of WEIGHT_FALLBACK_ORDER[targetWeight]) {
+    const buf = tryLoadFontFile(pkg, subset, w);
+    if (buf) return buf;
+  }
+  throw new Error(
+    `Ficheiro tipográfico embebido em falta para @fontsource/${pkg} (${subset}, peso ${targetWeight}).`
+  );
+}
+
 export function getSatoriFontsForPair(pairId: FontPairId): {
   pair: FontPairSpec;
-  fonts: { name: string; data: Buffer; weight: 400 | 500 | 600 | 700 | 800; style: "normal" }[];
+  fonts: SatoriFontEntry[];
 } {
   const pair = FONT_PAIRS[pairId] || FONT_PAIRS.moderna;
-  const entries: {
-    name: string;
-    data: Buffer;
-    weight: 400 | 500 | 600 | 700 | 800;
-    style: "normal";
-  }[] = [
-    {
-      name: pair.tituloFamily,
-      data: loadFontFile(pair.tituloPkg, "latin", pair.tituloWeight),
-      weight: pair.tituloWeight,
-      style: "normal",
-    },
-    {
-      name: pair.tituloFamily,
-      data: loadFontFile(pair.tituloPkg, "latin-ext", pair.tituloWeight),
-      weight: pair.tituloWeight,
-      style: "normal",
-    },
-    {
-      name: pair.textoFamily,
-      data: loadFontFile(pair.textoPkg, "latin", pair.textoWeight),
-      weight: pair.textoWeight,
-      style: "normal",
-    },
-    {
-      name: pair.textoFamily,
-      data: loadFontFile(pair.textoPkg, "latin-ext", pair.textoWeight),
-      weight: pair.textoWeight,
-      style: "normal",
-    },
-  ];
+  const entries: SatoriFontEntry[] = [];
+  const allWeights: SatoriWeight[] = [400, 500, 600, 700, 800];
 
-  const loadedKeys = new Set<string>([
-    `${pair.tituloFamily}:${pair.tituloWeight}`,
-    `${pair.textoFamily}:${pair.textoWeight}`,
-  ]);
+  const families: readonly [string, string][] =
+    pair.tituloPkg === pair.textoPkg && pair.tituloFamily === pair.textoFamily
+      ? [[pair.tituloFamily, pair.tituloPkg]]
+      : [
+          [pair.tituloFamily, pair.tituloPkg],
+          [pair.textoFamily, pair.textoPkg],
+        ];
 
-  const extraWeights: (400 | 500 | 600 | 700 | 800)[] = [400, 500, 600, 700, 800];
-  for (const [family, pkg] of [
-    [pair.tituloFamily, pair.tituloPkg],
-    [pair.textoFamily, pair.textoPkg],
-  ] as const) {
-    for (const w of extraWeights) {
-      const k = `${family}:${w}`;
-      if (loadedKeys.has(k)) continue;
-      const latin = tryLoadFontFile(pkg, "latin", w);
-      const latinExt = tryLoadFontFile(pkg, "latin-ext", w);
-      if (latin) {
-        entries.push({ name: family, data: latin, weight: w, style: "normal" });
-        if (latinExt) {
-          entries.push({ name: family, data: latinExt, weight: w, style: "normal" });
-        }
-        loadedKeys.add(k);
-      }
+  for (const [family, pkg] of families) {
+    for (const w of allWeights) {
+      const latin = loadFontWeightWithSameFamilyFallback(pkg, "latin", w);
+      entries.push({ name: family, data: latin, weight: w, style: "normal" });
+      const latinExt = loadFontWeightWithSameFamilyFallback(pkg, "latin-ext", w);
+      entries.push({ name: family, data: latinExt, weight: w, style: "normal" });
     }
   }
 
   return { pair, fonts: entries };
+}
+
+export function verifyAllFontPairAssets(): {
+  ok: boolean;
+  pairsChecked: FontPairId[];
+  missing: string[];
+} {
+  const pairsChecked: FontPairId[] = [];
+  const missing: string[] = [];
+
+  for (const pair of Object.values(FONT_PAIRS)) {
+    pairsChecked.push(pair.id);
+    for (const [label, pkg, w] of [
+      ["titulo", pair.tituloPkg, pair.tituloWeight],
+      ["texto", pair.textoPkg, pair.textoWeight],
+    ] as const) {
+      for (const subset of ["latin", "latin-ext"] as const) {
+        const direct = tryLoadFontFile(pkg, subset, w);
+        if (!direct || direct.length === 0) {
+          missing.push(`${pair.id}:${label}:${pkg}-${subset}-${w}`);
+        }
+      }
+    }
+  }
+
+  return { ok: missing.length === 0, pairsChecked, missing };
 }
 
 export function getGeometricSansStudioFonts(): {

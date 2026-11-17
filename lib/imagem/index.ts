@@ -14,7 +14,9 @@ import {
 import {
   BrandData,
   BrandPalette,
+  FONT_PAIRS,
   FontPairId,
+  resolverParTipograficoMarca,
   SECTORS,
   SectorId,
   StyleId,
@@ -165,10 +167,135 @@ function resolveTom(tom?: string): TomDaMarca {
   return "tradicional";
 }
 
-function getDistinctPalettesForRound(ronda: number): {
+function getDistinctPalettesForRound(
+  ronda: number,
+  tom: TomDaMarca = "tradicional",
+  sector: SectorId = "restauracao"
+): {
   classica: BrandPalette;
   moderna: BrandPalette;
 } {
+  const isWarmHeritage =
+    tom === "tradicional" ||
+    tom === "natural" ||
+    (sector === "restauracao" && tom !== "tecnico" && tom !== "jovem");
+
+  if (!isWarmHeritage) {
+    if (tom === "tecnico") {
+      if (ronda === 2) {
+        return {
+          classica: buildBrandPalette({
+            primaria: "#1E3A5F",
+            secundaria: "#0284C7",
+            papel: "#F8FAFC",
+            tinta: "#0F172A",
+          }),
+          moderna: buildBrandPalette({
+            primaria: "#0F172A",
+            secundaria: "#0EA5E9",
+            papel: "#F1F5F9",
+            tinta: "#090D16",
+          }),
+        };
+      }
+      if (ronda === 3) {
+        return {
+          classica: buildBrandPalette({
+            primaria: "#1E40AF",
+            secundaria: "#0D9488",
+            papel: "#F8FAFC",
+            tinta: "#0F172A",
+          }),
+          moderna: buildBrandPalette({
+            primaria: "#111827",
+            secundaria: "#2563EB",
+            papel: "#F9FAFB",
+            tinta: "#030712",
+          }),
+        };
+      }
+      return {
+        classica: buildBrandPalette({
+          primaria: "#1D4ED8",
+          secundaria: "#0F766E",
+          papel: "#F8FAFC",
+          tinta: "#0F172A",
+        }),
+        moderna: buildBrandPalette({
+          primaria: "#0F172A",
+          secundaria: "#38BDF8",
+          papel: "#F1F5F9",
+          tinta: "#0B1120",
+        }),
+      };
+    }
+
+    if (tom === "premium") {
+      if (ronda === 2) {
+        return {
+          classica: buildBrandPalette({
+            primaria: "#312E81",
+            secundaria: "#B45309",
+            papel: "#FAF8F5",
+            tinta: "#111827",
+          }),
+          moderna: buildBrandPalette({
+            primaria: "#18181B",
+            secundaria: "#C28E3A",
+            papel: "#F8F7F4",
+            tinta: "#09090B",
+          }),
+        };
+      }
+      return {
+        classica: buildBrandPalette({
+          primaria: "#1E293B",
+          secundaria: "#A16207",
+          papel: "#FAF8F4",
+          tinta: "#141413",
+        }),
+        moderna: buildBrandPalette({
+          primaria: "#141413",
+          secundaria: "#CA8A04",
+          papel: "#F7F5F0",
+          tinta: "#0F0F0E",
+        }),
+      };
+    }
+
+    // Jovem / Divertido
+    if (ronda === 2) {
+      return {
+        classica: buildBrandPalette({
+          primaria: "#0F766E",
+          secundaria: "#F59E0B",
+          papel: "#F8FAFC",
+          tinta: "#132122",
+        }),
+        moderna: buildBrandPalette({
+          primaria: "#3730A3",
+          secundaria: "#EC4899",
+          papel: "#FAFAFA",
+          tinta: "#111827",
+        }),
+      };
+    }
+    return {
+      classica: buildBrandPalette({
+        primaria: "#0D9488",
+        secundaria: "#EA580C",
+        papel: "#F9FAFB",
+        tinta: "#1E293B",
+      }),
+      moderna: buildBrandPalette({
+        primaria: "#1E1B4B",
+        secundaria: "#22C55E",
+        papel: "#F8FAFC",
+        tinta: "#0F172A",
+      }),
+    };
+  }
+
   if (ronda === 2) {
     return {
       classica: buildBrandPalette({
@@ -217,6 +344,90 @@ function getDistinctPalettesForRound(ronda: number): {
   };
 }
 
+function getDefaultPromptHintsForTom(tom: TomDaMarca): {
+  coresClassicas: string;
+  palavrasClassicas: string;
+  coresModernas: string;
+  palavrasModernas: string;
+} {
+  switch (tom) {
+    case "tecnico":
+      return {
+        coresClassicas: "Azul cobalto, cinzento ardósia e branco limpo",
+        palavrasClassicas: "Precisão, Engenharia, Clareza",
+        coresModernas: "Grafite escuro, azul elétrico e cinzento neutro",
+        palavrasModernas: "Rigor, Sistema, Inovação",
+      };
+    case "premium":
+      return {
+        coresClassicas: "Azul noite, dourado acetinado e marfim",
+        palavrasClassicas: "Elegância, Rigor, Distinção",
+        coresModernas: "Carvão profundo, bronze suave e branco osso",
+        palavrasModernas: "Minimalismo, Exclusividade, Harmonia",
+      };
+    case "jovem":
+      return {
+        coresClassicas: "Verde petróleo, âmbar vivo e branco suave",
+        palavrasClassicas: "Energia, Ritmo, Proximidade",
+        coresModernas: "Índigo intenso, coral luminoso e cinzento claro",
+        palavrasModernas: "Dinamismo, Comunidade, Expressão",
+      };
+    case "divertido":
+      return {
+        coresClassicas: "Turquesa luminoso, laranja quente e creme claro",
+        palavrasClassicas: "Simpatia, Acolhimento, Leveza",
+        coresModernas: "Azul vivo, verde menta e branco puro",
+        palavrasModernas: "Espontaneidade, Proximidade, Alegria",
+      };
+    case "natural":
+      return {
+        coresClassicas: "Terracota natural, verde sálvia e linho claro",
+        palavrasClassicas: "Origem, Matéria, Autenticidade",
+        coresModernas: "Verde floresta, ocre mineral e papel cru",
+        palavrasModernas: "Equilíbrio, Terra, Sustentabilidade",
+      };
+    case "tradicional":
+    default:
+      return {
+        coresClassicas: "Terracota, ocre e creme",
+        palavrasClassicas: "Tradição, Ofício, Autenticidade",
+        coresModernas: "Espresso escuro, dourado quente e creme",
+        palavrasModernas: "Geometria, Clareza, Rigor",
+      };
+  }
+}
+
+function resolveContrastingSecondaryFontPair(
+  basePair: FontPairId,
+  tom: TomDaMarca
+): FontPairId {
+  const sameCategoryPreferred =
+    tom === "tecnico" || tom === "jovem" || tom === "divertido";
+  const baseCategory = FONT_PAIRS[basePair]?.categoria || "sans";
+  const ordered: FontPairId[] = [
+    "moderna",
+    "tecnica",
+    "clara",
+    "editorial",
+    "confianca",
+    "classica",
+  ];
+  if (sameCategoryPreferred) {
+    return (
+      ordered.find(
+        (id) => id !== basePair && FONT_PAIRS[id].categoria === "sans"
+      ) || ordered.find((id) => id !== basePair) || "moderna"
+    );
+  }
+  return (
+    ordered.find(
+      (id) => id !== basePair && FONT_PAIRS[id].categoria !== baseCategory
+    ) ||
+    ordered.find((id) => id !== basePair) ||
+    "editorial"
+  );
+}
+
 export async function gerarPropostasLogotipoRonda(params: {
   sessaoId: string;
   nome: string;
@@ -248,6 +459,7 @@ export async function gerarPropostasLogotipoRonda(params: {
   const sectorLabel = SECTORS[sector].rotulo;
   const tom = resolveTom(params.tom);
   const tomSpec = TOM_DA_MARCA_SPECS[tom];
+  const promptHints = getDefaultPromptHintsForTom(tom);
 
   const orcamentoAtual = lerOrcamentoKit(params.sessaoId, params.limiteOverrideEur);
   const custoPrevisto = CUSTO_UNITARIO_EUR.gerar * 2;
@@ -263,8 +475,8 @@ export async function gerarPropostasLogotipoRonda(params: {
     sector: sectorLabel,
     tom: tomSpec.nome,
     tomDescricao: tomSpec.direcaoEstetica,
-    coresPreferidas: params.coresPreferidas || "Terracota, ocre e creme",
-    tresPalavras: params.tresPalavras || "Tradição, Ofício, Autenticidade",
+    coresPreferidas: params.coresPreferidas || promptHints.coresClassicas,
+    tresPalavras: params.tresPalavras || promptHints.palavrasClassicas,
     coresEvitar: params.coresEvitar || "Néons frios e efeitos 3D",
   });
 
@@ -273,8 +485,8 @@ export async function gerarPropostasLogotipoRonda(params: {
     sector: sectorLabel,
     tom: tomSpec.nome,
     tomDescricao: tomSpec.direcaoEstetica,
-    coresPreferidas: params.coresPreferidas || "Espresso escuro, dourado quente e creme",
-    tresPalavras: params.tresPalavras || "Geometria, Clareza, Rigor",
+    coresPreferidas: params.coresPreferidas || promptHints.coresModernas,
+    tresPalavras: params.tresPalavras || promptHints.palavrasModernas,
     coresEvitar: params.coresEvitar || "Clichés complexos e gradientes fotorealistas",
   });
 
@@ -315,15 +527,29 @@ export async function gerarPropostasLogotipoRonda(params: {
     detalhe: `Ronda ${ronda} (${tomSpec.nome}): Clássica + Moderna`,
   });
 
-  const palettes = getDistinctPalettesForRound(ronda);
+  const palettes = getDistinctPalettesForRound(ronda, tom, sector);
+  const fontClassica = resolverParTipograficoMarca({
+    tom,
+    sector,
+    estiloDirecao: "classico",
+  });
+  const rawFontModerna = resolverParTipograficoMarca({
+    tom,
+    sector,
+    estiloDirecao: "moderno",
+  });
+  const fontModerna =
+    rawFontModerna === fontClassica
+      ? resolveContrastingSecondaryFontPair(fontClassica, tom)
+      : rawFontModerna;
 
   const propostaClassica: LogoPropostaIA = {
     id: `ia-classica-r${ronda}`,
     estilo: "classico",
     tom,
     titulo: "Proposta A — Clássica com símbolo",
-    subtitulo: `Tom ${tomSpec.nome}: emblema figurativo e serifado de ofício`,
-    racional: `Composição com símbolo patrimonial equilibrado para o setor de ${sectorLabel} (${tomSpec.resumo.toLowerCase()}) e ótimo contraste para avatares a 40 px.`,
+    subtitulo: `Tom ${tomSpec.nome}: composição estruturada (${FONT_PAIRS[fontClassica].nome})`,
+    racional: `Composição com símbolo equilibrado para o setor de ${sectorLabel} (${tomSpec.resumo.toLowerCase()}) e ótimo contraste para avatares a 40 px.`,
     ronda,
     origem: imgClassica.origem,
     fixtureNome: imgClassica.fixtureNome,
@@ -333,7 +559,7 @@ export async function gerarPropostasLogotipoRonda(params: {
     width: imgClassica.width,
     height: imgClassica.height,
     sugestaoPaleta: palettes.classica,
-    sugestaoFontPairId: "clara",
+    sugestaoFontPairId: fontClassica,
   };
 
   const propostaModerna: LogoPropostaIA = {
@@ -341,8 +567,8 @@ export async function gerarPropostasLogotipoRonda(params: {
     estilo: "moderno",
     tom,
     titulo: "Proposta B — Moderna em bloco e contraste",
-    subtitulo: `Tom ${tomSpec.nome}: emblema contemporâneo forte e tipografia limpa`,
-    racional: `Direção contemporânea contrastante em painel escuro, pensada para desdobrar capas e publicações modernas em camadas a partir deste emblema.`,
+    subtitulo: `Tom ${tomSpec.nome}: emblema contemporâneo forte (${FONT_PAIRS[fontModerna].nome})`,
+    racional: `Direção contemporânea contrastante para o setor de ${sectorLabel}, pensada para desdobrar capas e publicações modernas em camadas.`,
     ronda,
     origem: imgModerna.origem,
     fixtureNome: imgModerna.fixtureNome,
@@ -352,7 +578,7 @@ export async function gerarPropostasLogotipoRonda(params: {
     width: imgModerna.width,
     height: imgModerna.height,
     sugestaoPaleta: palettes.moderna,
-    sugestaoFontPairId: "moderna",
+    sugestaoFontPairId: fontModerna,
   };
 
   return {
@@ -513,7 +739,13 @@ export async function gerarPecaRedeSocialComAuditoria(params: {
       ? params.dados.sector
       : "restauracao";
   const sectorLabel = SECTORS[sector].rotulo;
-  const resolvedFontPairId = params.fontPairId || SECTORS[sector].parSugerido;
+  const resolvedFontPairId =
+    params.fontPairId ||
+    resolverParTipograficoMarca({
+      tom,
+      sector,
+      estiloDirecao: params.estiloVisual,
+    });
 
   const dna =
     params.logotipoDna ||

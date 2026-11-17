@@ -259,6 +259,7 @@ export async function renderHorizontalVariant(params: {
           justifyContent: "center",
           padding: "48px 96px",
           gap: "56px",
+          fontFamily: pair.textoFamily,
         },
       },
       h("img", {
@@ -764,8 +765,8 @@ export function renderEmailSignatureHtml(params: {
   <meta charset="utf-8" />
   <title>Assinatura de Email — ${escapeHtml(dados.nome)}</title>
 </head>
-<body style="margin: 0; padding: 16px; background-color: #ffffff; font-family: '${pair.tituloFamily}', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; max-width: 580px; width: 100%; background-color: ${cardBg}; border: 1px solid ${borderCol}; border-left: 5px solid ${headerBandBg};">
+<body style="margin: 0; padding: 16px; background-color: #ffffff; font-family: '${pair.textoFamily}', ${pair.textoCssFallback};">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; max-width: 580px; width: 100%; background-color: ${cardBg}; border: 1px solid ${borderCol}; border-left: 5px solid ${headerBandBg}; font-family: '${pair.textoFamily}', ${pair.textoCssFallback};">
     <tr>
       <td style="padding: 18px 20px; vertical-align: top;">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%;">
@@ -773,26 +774,26 @@ export function renderEmailSignatureHtml(params: {
             <td style="vertical-align: middle; padding-right: 18px; white-space: nowrap;">
               <img src="logotipo-assinatura.png" alt="${escapeHtml(dados.nome)}" height="64" style="display: block; height: 64px; width: auto; max-width: 240px; border: 0;" />
             </td>
-            <td style="vertical-align: top;">
+            <td style="vertical-align: top; font-family: '${pair.textoFamily}', ${pair.textoCssFallback};">
               ${
                 dados.pessoa
-                  ? `<div style="font-size: 16px; font-weight: 700; color: ${nameCol}; line-height: 1.25; margin: 0;">${escapeHtml(dados.pessoa)}</div>`
+                  ? `<div style="font-family: '${pair.tituloFamily}', ${pair.tituloCssFallback}; font-size: 16px; font-weight: 700; color: ${nameCol}; line-height: 1.25; margin: 0;">${escapeHtml(dados.pessoa)}</div>`
                   : ""
               }
               ${
                 dados.cargo
-                  ? `<div style="font-size: 13px; font-weight: 600; color: ${accentCol}; line-height: 1.3; margin-top: 2px;">${escapeHtml(dados.cargo)}</div>`
+                  ? `<div style="font-family: '${pair.textoFamily}', ${pair.textoCssFallback}; font-size: 13px; font-weight: 600; color: ${accentCol}; line-height: 1.3; margin-top: 2px;">${escapeHtml(dados.cargo)}</div>`
                   : ""
               }
-              <div style="font-size: 15px; font-weight: 700; color: ${nameCol}; line-height: 1.3; margin-top: ${dados.pessoa ? "6px" : "0"};">${escapeHtml(dados.nome)}</div>
+              <div style="font-family: '${pair.tituloFamily}', ${pair.tituloCssFallback}; font-size: 15px; font-weight: 700; color: ${nameCol}; line-height: 1.3; margin-top: ${dados.pessoa ? "6px" : "0"};">${escapeHtml(dados.nome)}</div>
               ${
                 dados.slogan
-                  ? `<div style="font-size: 12px; font-style: italic; color: ${textCol}; line-height: 1.35; margin-top: 2px;">${escapeHtml(dados.slogan)}</div>`
+                  ? `<div style="font-family: '${pair.textoFamily}', ${pair.textoCssFallback}; font-size: 12px; color: ${textCol}; line-height: 1.35; margin-top: 2px;">${escapeHtml(dados.slogan)}</div>`
                   : ""
               }
               ${
                 dados.servicos && style === "informativo"
-                  ? `<div style="font-size: 12px; color: ${nameCol}; background-color: #ffffff; border: 1px solid ${borderCol}; padding: 4px 8px; margin-top: 8px; display: inline-block;">${escapeHtml(dados.servicos)}</div>`
+                  ? `<div style="font-family: '${pair.textoFamily}', ${pair.textoCssFallback}; font-size: 12px; color: ${nameCol}; background-color: #ffffff; border: 1px solid ${borderCol}; padding: 4px 8px; margin-top: 8px; display: inline-block;">${escapeHtml(dados.servicos)}</div>`
                   : ""
               }
             </td>
@@ -802,7 +803,7 @@ export function renderEmailSignatureHtml(params: {
           dados.telefone || dados.email || websiteClean || dados.morada || nifClean
             ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%; margin-top: 12px; border-top: 1px solid ${borderCol};">
           <tr>
-            <td style="padding-top: 10px; font-size: 12px; color: ${textCol}; line-height: 1.6;">
+            <td style="padding-top: 10px; font-family: '${pair.textoFamily}', ${pair.textoCssFallback}; font-size: 12px; color: ${textCol}; line-height: 1.6;">
               ${
                 dados.telefone
                   ? `<span style="margin-right: 12px;"><strong>Tel.:</strong> ${escapeHtml(dados.telefone)}</span>`
@@ -937,6 +938,7 @@ export async function renderBusinessCardPdf(params: {
         alignItems: "center",
         justifyContent: "center",
         padding: `${bleedPx + 40}px`,
+        fontFamily: pair.textoFamily,
       },
     },
     fittedFrontLogo.element,
@@ -962,10 +964,10 @@ export async function renderBusinessCardPdf(params: {
           {
             style: {
               fontFamily: pair.textoFamily,
-              fontWeight: 400,
-              fontSize: "23px",
+              fontWeight: 500,
+              fontSize: "26px",
               color: theme.mutedTextColor,
-              marginTop: "10px",
+              marginTop: "12px",
               textAlign: "center",
             },
           },
@@ -977,8 +979,8 @@ export async function renderBusinessCardPdf(params: {
           {
             style: {
               fontFamily: pair.textoFamily,
-              fontWeight: 400,
-              fontSize: "22px",
+              fontWeight: 500,
+              fontSize: "26px",
               color: theme.mutedTextColor,
               marginTop: "24px",
               textAlign: "center",
@@ -1010,8 +1012,9 @@ export async function renderBusinessCardPdf(params: {
         flexDirection: "column",
         justifyContent: "space-between",
         backgroundColor: paleta.papel.hex,
-        padding: `${bleedPx + 48}px`,
+        padding: `${bleedPx + 44}px`,
         borderLeft: `${bleedPx + 14}px solid ${paleta.primaria.hex}`,
+        fontFamily: pair.textoFamily,
       },
     },
     h(
@@ -1031,6 +1034,7 @@ export async function renderBusinessCardPdf(params: {
           style: {
             display: "flex",
             flexDirection: "column",
+            maxWidth: "590px",
           },
         },
         dados.pessoa
@@ -1040,7 +1044,7 @@ export async function renderBusinessCardPdf(params: {
                 style: {
                   fontFamily: pair.tituloFamily,
                   fontWeight: pair.tituloWeight,
-                  fontSize: "38px",
+                  fontSize: "42px",
                   color: paleta.tinta.hex,
                 },
               },
@@ -1052,7 +1056,7 @@ export async function renderBusinessCardPdf(params: {
                 style: {
                   fontFamily: pair.tituloFamily,
                   fontWeight: pair.tituloWeight,
-                  fontSize: "38px",
+                  fontSize: "42px",
                   color: paleta.tinta.hex,
                 },
               },
@@ -1064,8 +1068,8 @@ export async function renderBusinessCardPdf(params: {
               {
                 style: {
                   fontFamily: pair.textoFamily,
-                  fontWeight: 400,
-                  fontSize: "22px",
+                  fontWeight: 600,
+                  fontSize: "26px",
                   color: paleta.primaria.hex,
                   marginTop: "6px",
                 },
@@ -1079,10 +1083,10 @@ export async function renderBusinessCardPdf(params: {
                 style: {
                   fontFamily: pair.textoFamily,
                   fontWeight: 400,
-                  fontSize: "20px",
+                  fontSize: "26px",
                   color: paleta.neutro.hex,
-                  marginTop: "6px",
-                  maxWidth: "560px",
+                  marginTop: "8px",
+                  maxWidth: "570px",
                 },
               },
               dados.slogan
@@ -1101,9 +1105,9 @@ export async function renderBusinessCardPdf(params: {
           "div",
           {
             style: {
-              fontFamily: pair.tituloFamily,
-              fontWeight: 400,
-              fontSize: "20px",
+              fontFamily: pair.textoFamily,
+              fontWeight: 500,
+              fontSize: "25px",
               color: paleta.neutro.hex,
             },
           },
@@ -1118,11 +1122,13 @@ export async function renderBusinessCardPdf(params: {
               width: "100%",
               display: "flex",
               flexDirection: "column",
-              gap: "8px",
+              gap: "6px",
               borderTop: `2px solid ${mixHex(paleta.papel.hex, paleta.tinta.hex, 0.15)}`,
-              paddingTop: "20px",
+              paddingTop: "18px",
               fontFamily: pair.textoFamily,
-              fontSize: "20px",
+              fontWeight: 500,
+              fontSize: "27px",
+              lineHeight: 1.32,
               color: paleta.tinta.hex,
             },
           },
@@ -1238,6 +1244,7 @@ export async function renderLetterheadPdf(params: {
         alignItems: "center",
         justifyContent: "space-between",
         padding: "36px 64px",
+        fontFamily: pair.textoFamily,
       },
     },
     h(
@@ -1266,7 +1273,7 @@ export async function renderLetterheadPdf(params: {
                 style: {
                   fontFamily: pair.tituloFamily,
                   fontWeight: pair.tituloWeight,
-                  fontSize: "40px",
+                  fontSize: "42px",
                   color: theme.textColor,
                 },
               },
@@ -1279,7 +1286,7 @@ export async function renderLetterheadPdf(params: {
                     style: {
                       fontFamily: pair.textoFamily,
                       fontWeight: 400,
-                      fontSize: "20px",
+                      fontSize: "22px",
                       color: theme.mutedTextColor,
                       marginTop: "6px",
                     },
@@ -1295,14 +1302,14 @@ export async function renderLetterheadPdf(params: {
           "div",
           {
             style: {
-              fontFamily: pair.tituloFamily,
-              fontWeight: 400,
-              fontSize: "18px",
+              fontFamily: pair.textoFamily,
+              fontWeight: 600,
+              fontSize: "20px",
               color: theme.badgeText,
               backgroundColor: theme.badgeBg,
               padding: "10px 18px",
               borderRadius: "8px",
-              maxWidth: "360px",
+              maxWidth: "380px",
             },
           },
           dados.servicos
@@ -1340,6 +1347,7 @@ export async function renderLetterheadPdf(params: {
         flexDirection: "column",
         justifyContent: "space-between",
         backgroundColor: "#FFFFFF",
+        fontFamily: pair.textoFamily,
       },
     },
     h("img", {
@@ -1369,7 +1377,9 @@ export async function renderLetterheadPdf(params: {
           justifyContent: "space-between",
           alignItems: "center",
           fontFamily: pair.textoFamily,
-          fontSize: "18px",
+          fontWeight: 500,
+          fontSize: "20px",
+          lineHeight: 1.35,
           color: paleta.tinta.hex,
         },
       },
@@ -1388,7 +1398,7 @@ export async function renderLetterheadPdf(params: {
             style: {
               fontFamily: pair.tituloFamily,
               fontWeight: pair.tituloWeight,
-              fontSize: "19px",
+              fontSize: "22px",
             },
           },
           dados.nome
@@ -1414,7 +1424,7 @@ export async function renderLetterheadPdf(params: {
               style: {
                 fontFamily: pair.tituloFamily,
                 fontWeight: pair.tituloWeight,
-                fontSize: "18px",
+                fontSize: "20px",
                 color: paleta.tinta.hex,
                 padding: "8px 16px",
                 border: `1.5px solid ${paleta.neutro.hex}`,
@@ -1499,6 +1509,7 @@ export async function renderBrandGuidePdf(params: {
         justifyContent: "space-between",
         backgroundColor: "#FFFFFF",
         padding: "56px 64px",
+        fontFamily: pair.textoFamily,
       },
     },
     h(
@@ -1526,9 +1537,9 @@ export async function renderBrandGuidePdf(params: {
           "div",
           {
             style: {
-              fontFamily: pair.tituloFamily,
-              fontWeight: 400,
-              fontSize: "17px",
+              fontFamily: pair.textoFamily,
+              fontWeight: 700,
+              fontSize: "18px",
               color: paleta.primaria.hex,
               letterSpacing: "0.08em",
             },
@@ -1541,7 +1552,7 @@ export async function renderBrandGuidePdf(params: {
             style: {
               fontFamily: pair.tituloFamily,
               fontWeight: pair.tituloWeight,
-              fontSize: "48px",
+              fontSize: "50px",
               color: paleta.tinta.hex,
               marginTop: "6px",
             },
@@ -1554,8 +1565,8 @@ export async function renderBrandGuidePdf(params: {
               {
                 style: {
                   fontFamily: pair.textoFamily,
-                  fontWeight: 400,
-                  fontSize: "21px",
+                  fontWeight: 500,
+                  fontSize: "23px",
                   color: paleta.neutro.hex,
                   marginTop: "4px",
                 },
@@ -1572,7 +1583,9 @@ export async function renderBrandGuidePdf(params: {
             flexDirection: "column",
             alignItems: "flex-end",
             fontFamily: pair.textoFamily,
-            fontSize: "16px",
+            fontWeight: 500,
+            fontSize: "18px",
+            lineHeight: 1.35,
             color: paleta.neutro.hex,
           },
         },
@@ -1596,7 +1609,7 @@ export async function renderBrandGuidePdf(params: {
           style: {
             fontFamily: pair.tituloFamily,
             fontWeight: pair.tituloWeight,
-            fontSize: "23px",
+            fontSize: "24px",
             color: paleta.tinta.hex,
           },
         },
@@ -1639,8 +1652,9 @@ export async function renderBrandGuidePdf(params: {
             "div",
             {
               style: {
-                fontFamily: pair.tituloFamily,
-                fontSize: "14px",
+                fontFamily: pair.textoFamily,
+                fontWeight: 500,
+                fontSize: "16px",
                 color: paleta.neutro.hex,
               },
             },
@@ -1673,8 +1687,9 @@ export async function renderBrandGuidePdf(params: {
             "div",
             {
               style: {
-                fontFamily: pair.tituloFamily,
-                fontSize: "14px",
+                fontFamily: pair.textoFamily,
+                fontWeight: 500,
+                fontSize: "16px",
                 color: paleta.neutro.hex,
               },
             },
@@ -1707,8 +1722,9 @@ export async function renderBrandGuidePdf(params: {
             "div",
             {
               style: {
-                fontFamily: pair.tituloFamily,
-                fontSize: "14px",
+                fontFamily: pair.textoFamily,
+                fontWeight: 500,
+                fontSize: "16px",
                 color: paleta.neutro.hex,
               },
             },
@@ -1741,8 +1757,9 @@ export async function renderBrandGuidePdf(params: {
             "div",
             {
               style: {
-                fontFamily: pair.tituloFamily,
-                fontSize: "14px",
+                fontFamily: pair.textoFamily,
+                fontWeight: 500,
+                fontSize: "16px",
                 color: paleta.neutro.hex,
               },
             },
@@ -1767,7 +1784,7 @@ export async function renderBrandGuidePdf(params: {
           style: {
             fontFamily: pair.tituloFamily,
             fontWeight: pair.tituloWeight,
-            fontSize: "23px",
+            fontSize: "24px",
             color: paleta.tinta.hex,
           },
         },
@@ -1821,7 +1838,7 @@ export async function renderBrandGuidePdf(params: {
                   style: {
                     fontFamily: pair.tituloFamily,
                     fontWeight: pair.tituloWeight,
-                    fontSize: "17px",
+                    fontSize: "18px",
                     color: paleta.tinta.hex,
                   },
                 },
@@ -1831,9 +1848,9 @@ export async function renderBrandGuidePdf(params: {
                 "div",
                 {
                   style: {
-                    fontFamily: pair.tituloFamily,
-                    fontWeight: 400,
-                    fontSize: "15px",
+                    fontFamily: pair.textoFamily,
+                    fontWeight: 600,
+                    fontSize: "17px",
                     color: paleta.primaria.hex,
                   },
                 },
@@ -1845,7 +1862,7 @@ export async function renderBrandGuidePdf(params: {
                   style: {
                     fontFamily: pair.textoFamily,
                     fontWeight: 400,
-                    fontSize: "13px",
+                    fontSize: "15px",
                     color: paleta.neutro.hex,
                   },
                 },
@@ -1872,7 +1889,7 @@ export async function renderBrandGuidePdf(params: {
           style: {
             fontFamily: pair.tituloFamily,
             fontWeight: pair.tituloWeight,
-            fontSize: "23px",
+            fontSize: "24px",
             color: paleta.tinta.hex,
           },
         },
@@ -1906,8 +1923,9 @@ export async function renderBrandGuidePdf(params: {
             "div",
             {
               style: {
-                fontFamily: pair.tituloFamily,
-                fontSize: "14px",
+                fontFamily: pair.textoFamily,
+                fontWeight: 700,
+                fontSize: "16px",
                 color: paleta.primaria.hex,
               },
             },
@@ -1919,7 +1937,7 @@ export async function renderBrandGuidePdf(params: {
               style: {
                 fontFamily: pair.tituloFamily,
                 fontWeight: pair.tituloWeight,
-                fontSize: "32px",
+                fontSize: "34px",
                 color: paleta.tinta.hex,
               },
             },
@@ -1931,7 +1949,7 @@ export async function renderBrandGuidePdf(params: {
               style: {
                 fontFamily: pair.tituloFamily,
                 fontWeight: pair.tituloWeight,
-                fontSize: "18px",
+                fontSize: "19px",
                 color: paleta.neutro.hex,
               },
             },
@@ -1956,8 +1974,9 @@ export async function renderBrandGuidePdf(params: {
             "div",
             {
               style: {
-                fontFamily: pair.tituloFamily,
-                fontSize: "14px",
+                fontFamily: pair.textoFamily,
+                fontWeight: 700,
+                fontSize: "16px",
                 color: paleta.primaria.hex,
               },
             },
@@ -1969,7 +1988,7 @@ export async function renderBrandGuidePdf(params: {
               style: {
                 fontFamily: pair.textoFamily,
                 fontWeight: pair.textoWeight,
-                fontSize: "21px",
+                fontSize: "22px",
                 color: paleta.tinta.hex,
                 lineHeight: 1.4,
               },
@@ -1984,7 +2003,7 @@ export async function renderBrandGuidePdf(params: {
               style: {
                 fontFamily: pair.textoFamily,
                 fontWeight: pair.textoWeight,
-                fontSize: "17px",
+                fontSize: "18px",
                 color: paleta.neutro.hex,
               },
             },
@@ -2004,7 +2023,8 @@ export async function renderBrandGuidePdf(params: {
           borderTop: "1px solid #CBD5E1",
           paddingTop: "14px",
           fontFamily: pair.textoFamily,
-          fontSize: "14px",
+          fontWeight: 500,
+          fontSize: "17px",
           color: paleta.neutro.hex,
         },
       },

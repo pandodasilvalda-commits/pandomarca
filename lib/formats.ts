@@ -36,7 +36,10 @@ export type FontPairId =
   | "confianca"
   | "editorial"
   | "clara"
-  | "tecnica";
+  | "tecnica"
+  | "classica";
+
+export type FontCategory = "sans" | "serif" | "misto";
 
 export type StyleId =
   | "liso"
@@ -106,84 +109,122 @@ export interface BrandData {
   servicos: string;
 }
 
+const SANS_CSS_FALLBACK =
+  "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+const SERIF_CSS_FALLBACK = "Georgia, 'Times New Roman', Times, serif";
+
 export interface FontPairSpec {
   id: FontPairId;
   nome: string;
+  categoria: FontCategory;
   tituloFamily: string;
   tituloPkg: string;
   tituloWeight: 600 | 700;
+  tituloCssFallback: string;
   textoFamily: string;
   textoPkg: string;
   textoWeight: 400;
+  textoCssFallback: string;
   serveSobretudo: string;
   googleFontsUrl: string;
 }
 
 export const FONT_PAIRS: Record<FontPairId, FontPairSpec> = {
+  tecnica: {
+    id: "tecnica",
+    nome: "Técnica",
+    categoria: "sans",
+    tituloFamily: "Manrope",
+    tituloPkg: "manrope",
+    tituloWeight: 600,
+    tituloCssFallback: SANS_CSS_FALLBACK,
+    textoFamily: "Source Sans 3",
+    textoPkg: "source-sans-3",
+    textoWeight: 400,
+    textoCssFallback: SANS_CSS_FALLBACK,
+    serveSobretudo: "Tecnologia, engenharia e construção",
+    googleFontsUrl:
+      "https://fonts.google.com/share?selection.family=Manrope:wght@600|Source+Sans+3:wght@400",
+  },
   moderna: {
     id: "moderna",
     nome: "Moderna",
+    categoria: "sans",
     tituloFamily: "Outfit",
     tituloPkg: "outfit",
     tituloWeight: 600,
-    textoFamily: "Source Serif 4",
-    textoPkg: "source-serif-4",
+    tituloCssFallback: SANS_CSS_FALLBACK,
+    textoFamily: "Manrope",
+    textoPkg: "manrope",
     textoWeight: 400,
-    serveSobretudo: "Comércio e marcas novas",
+    textoCssFallback: SANS_CSS_FALLBACK,
+    serveSobretudo: "Comércio, digital e marcas jovens",
     googleFontsUrl:
-      "https://fonts.google.com/share?selection.family=Outfit:wght@600|Source+Serif+4:wght@400",
-  },
-  confianca: {
-    id: "confianca",
-    nome: "Confiança",
-    tituloFamily: "Source Sans 3",
-    tituloPkg: "source-sans-3",
-    tituloWeight: 600,
-    textoFamily: "Libre Baskerville",
-    textoPkg: "libre-baskerville",
-    textoWeight: 400,
-    serveSobretudo: "Serviços e saúde",
-    googleFontsUrl:
-      "https://fonts.google.com/share?selection.family=Libre+Baskerville:wght@400|Source+Sans+3:wght@600",
-  },
-  editorial: {
-    id: "editorial",
-    nome: "Editorial",
-    tituloFamily: "Fraunces",
-    tituloPkg: "fraunces",
-    tituloWeight: 600,
-    textoFamily: "Outfit",
-    textoPkg: "outfit",
-    textoWeight: 400,
-    serveSobretudo: "Beleza e educação",
-    googleFontsUrl:
-      "https://fonts.google.com/share?selection.family=Fraunces:wght@600|Outfit:wght@400",
+      "https://fonts.google.com/share?selection.family=Outfit:wght@600|Manrope:wght@400",
   },
   clara: {
     id: "clara",
     nome: "Clara",
+    categoria: "sans",
     tituloFamily: "Nunito",
     tituloPkg: "nunito",
     tituloWeight: 700,
-    textoFamily: "Lora",
-    textoPkg: "lora",
+    tituloCssFallback: SANS_CSS_FALLBACK,
+    textoFamily: "Source Sans 3",
+    textoPkg: "source-sans-3",
     textoWeight: 400,
-    serveSobretudo: "Restauração e marcas próximas",
+    textoCssFallback: SANS_CSS_FALLBACK,
+    serveSobretudo: "Marcas próximas, atendimento e quotidiano",
     googleFontsUrl:
-      "https://fonts.google.com/share?selection.family=Lora:wght@400|Nunito:wght@700",
+      "https://fonts.google.com/share?selection.family=Nunito:wght@700|Source+Sans+3:wght@400",
   },
-  tecnica: {
-    id: "tecnica",
-    nome: "Técnica",
-    tituloFamily: "Manrope",
-    tituloPkg: "manrope",
+  confianca: {
+    id: "confianca",
+    nome: "Confiança",
+    categoria: "misto",
+    tituloFamily: "Libre Baskerville",
+    tituloPkg: "libre-baskerville",
+    tituloWeight: 700,
+    tituloCssFallback: SERIF_CSS_FALLBACK,
+    textoFamily: "Source Sans 3",
+    textoPkg: "source-sans-3",
+    textoWeight: 400,
+    textoCssFallback: SANS_CSS_FALLBACK,
+    serveSobretudo: "Advocacia, saúde e serviços de confiança",
+    googleFontsUrl:
+      "https://fonts.google.com/share?selection.family=Libre+Baskerville:wght@700|Source+Sans+3:wght@400",
+  },
+  editorial: {
+    id: "editorial",
+    nome: "Editorial",
+    categoria: "misto",
+    tituloFamily: "Fraunces",
+    tituloPkg: "fraunces",
     tituloWeight: 600,
+    tituloCssFallback: SERIF_CSS_FALLBACK,
+    textoFamily: "Outfit",
+    textoPkg: "outfit",
+    textoWeight: 400,
+    textoCssFallback: SANS_CSS_FALLBACK,
+    serveSobretudo: "Gastronomia, beleza e marcas premium",
+    googleFontsUrl:
+      "https://fonts.google.com/share?selection.family=Fraunces:wght@600|Outfit:wght@400",
+  },
+  classica: {
+    id: "classica",
+    nome: "Clássica",
+    categoria: "serif",
+    tituloFamily: "Lora",
+    tituloPkg: "lora",
+    tituloWeight: 600,
+    tituloCssFallback: SERIF_CSS_FALLBACK,
     textoFamily: "Source Serif 4",
     textoPkg: "source-serif-4",
     textoWeight: 400,
-    serveSobretudo: "Tecnologia e construção",
+    textoCssFallback: SERIF_CSS_FALLBACK,
+    serveSobretudo: "Tradição, ofício, património e alojamento clássico",
     googleFontsUrl:
-      "https://fonts.google.com/share?selection.family=Manrope:wght@600|Source+Serif+4:wght@400",
+      "https://fonts.google.com/share?selection.family=Lora:wght@600|Source+Serif+4:wght@400",
   },
 };
 
@@ -198,7 +239,7 @@ export const SECTORS: Record<SectorId, SectorSpec> = {
   restauracao: {
     id: "restauracao",
     rotulo: "Restauração",
-    parSugerido: "clara",
+    parSugerido: "classica",
     recomendacoes: {
       capas: ["fotografia", "degrade"],
       publicacao: ["fotografia", "padrao"],
@@ -313,6 +354,63 @@ export const SECTORS: Record<SectorId, SectorSpec> = {
     },
   },
 };
+
+export const FONT_CATEGORY_LABELS: Record<FontCategory, string> = {
+  sans: "Sem serifas",
+  misto: "Serifa + Sem serifas",
+  serif: "Serifada",
+};
+
+/**
+ * Escolhe o par tipográfico mais adequado à identidade de cada marca a partir do seu tom,
+ * sector de atividade e direção visual do logótipo (sem hardcodes por marca).
+ * Marcas tecnológicas/jovens/divertidas recebem pares sem serifa limpos;
+ * marcas tradicionais, premium, jurídicas ou patrimoniais podem receber pares mistos ou serifados intencionais.
+ */
+export function resolverParTipograficoMarca(params: {
+  tom?: TomDaMarca;
+  sector?: SectorId;
+  estiloDirecao?: "classico" | "moderno";
+}): FontPairId {
+  const { tom, sector, estiloDirecao } = params;
+
+  if (tom) {
+    switch (tom) {
+      case "tecnico":
+        return "tecnica";
+      case "jovem":
+        return estiloDirecao === "classico" ? "clara" : "moderna";
+      case "divertido":
+        return estiloDirecao === "moderno" ? "moderna" : "clara";
+      case "natural":
+        if (estiloDirecao === "classico") return "classica";
+        if (sector === "restauracao" || sector === "beleza" || sector === "educacao") {
+          return "editorial";
+        }
+        return "clara";
+      case "premium":
+        if (
+          (sector === "tecnologia" || sector === "construcao") &&
+          estiloDirecao === "moderno"
+        ) {
+          return "moderna";
+        }
+        if (sector === "servicos" || sector === "saude") {
+          return "confianca";
+        }
+        return "editorial";
+      case "tradicional":
+        if (sector === "tecnologia") return "tecnica";
+        if (sector === "servicos" || sector === "saude" || sector === "construcao") {
+          return "confianca";
+        }
+        if (estiloDirecao === "moderno") return "editorial";
+        return "classica";
+    }
+  }
+
+  return (sector && SECTORS[sector]?.parSugerido) || "moderna";
+}
 
 export interface ContentStyleSpec {
   id: StyleId;
